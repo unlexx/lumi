@@ -6,13 +6,18 @@ fn greet(name: &str) -> String {
 
 mod parser;
 mod scanner;
+mod tmdb;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Загружаем .env при старте приложения
+    dotenvy::dotenv().ok();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            scanner::scan_videos
+            scanner::scan_videos,
+    tmdb::fetch_poster
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
