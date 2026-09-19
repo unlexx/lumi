@@ -8,6 +8,7 @@ mod parser;
 mod scanner;
 mod tmdb;
 mod cache;
+mod player;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,10 +17,12 @@ pub fn run() {
     cache::init_db().expect("Не удалось инициализировать кэш");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())  
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scanner::scan_videos,
-            tmdb::get_poster
+            tmdb::get_poster,
+            player::play_video
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
