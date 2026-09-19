@@ -73,7 +73,7 @@ pub async fn scan_videos(folder_path: String) -> Result<Vec<VideoFile>, String> 
     let client = crate::tmdb::build_client().map_err(|e| e.to_string())?;
 
     for video in &mut videos {
-        match crate::tmdb::search_movie(
+        match crate::tmdb::get_or_fetch(
             &client,
             &api_key,
             &video.parsed.title,
