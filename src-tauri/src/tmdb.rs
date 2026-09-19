@@ -126,12 +126,22 @@ pub async fn get_or_fetch(
     Ok(result)
 }
 
-/// Скачивает постер через прокси и возвращает как data URL (base64).
-/// Временное решение — в LUMI-5 заменим на локальный кэш файлов.
 #[tauri::command]
-pub async fn fetch_poster(url: String) -> Result<String, String> {
-    let client = build_client().map_err(|e| e.to_string())?;
+pub async fn get_poster(tmdb_id: u32, poster_path: String) -> Result<String, String> {
+    let posters_dir = cache::posters_dir();
+    let file_path = posters_dir.join(format!("{}.jpg", tmdb_id));
 
+    // Если уже скачан — возвращаем путь
+    if file_path.exists() {
+        println!("  → Poster cache HIT: {}", tmdb_id);
+        return Ok(file_path.to_string_lossy().to_string());
+    }
+
+    // Иначе качаем
+    println!("  → Poster cache MISS: {}, downloading...", tmdb_id);
+    let url = format!("https://image.tmdb.org/t/p/w500{}", poster_path);
+
+    let client = build_client().map_err(|e| e.to_string())?;
     let response = client
         .get(&url)
         .send()
@@ -147,8 +157,8 @@ pub async fn fetch_poster(url: String) -> Result<String, String> {
         .await
         .map_err(|e| format!("Read error: {}", e))?;
 
-    use base64::{engine::general_purpose, Engine as _};
-    let encoded = general_purpose::STANDARD.encode(&bytes);
+    std::fs::write(&file_path, &bytes)
+        .map_err(|e| format!("Write error: {}", e))?;
 
-    Ok(format!("data:image/jpeg;base64,{}", encoded))
+    Ok(file_path.to_string_lossy().to_string())
 }

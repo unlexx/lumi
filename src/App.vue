@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { convertFileSrc } from '@tauri-apps/api/core'
 
 interface ParsedVideo {
   title: string
@@ -16,6 +17,7 @@ interface TmdbInfo {
   title: string
   overview: string | null
   poster_url: string | null
+  poster_local: string | null
   rating: number | null
 }
 
@@ -47,27 +49,34 @@ async function selectFolder() {
     videos.value = await invoke<VideoFile[]>('scan_videos', {
       folderPath: folder
     })
-    for (const v of videos.value) {
-      loadPoster(v)
-    }
+    loadPosters()
   } catch (e) {
     error.value = String(e)
     videos.value = []
   } finally {
     loading.value = false
   }
-
-  async function loadPoster(video: VideoFile) {
-    if (!video.tmdb?.poster_url) return
+}
+async function loadPosters() {
+  for (const video of videos.value) {
+    if (!video.tmdb?.poster_url) continue
     try {
-      const dataUrl = await invoke<string>('fetch_poster', {
-        url: video.tmdb.poster_url
+      // Из poster_url вытаскиваем tmdb_id и путь
+      const localPath = await invoke<string>('get_poster', {
+        tmdbId: video.tmdb.id,
+        posterPath: extractPosterPath(video.tmdb.poster_url)
       })
-      // сохранить в реактивное поле
-      video.tmdb.poster_data = dataUrl
+      video.tmdb.poster_local = convertFileSrc(localPath)
     } catch (e) {
-      console.error('Poster error:', e)
+      console.error('Poster error for', video.parsed.title, e)
     }
+  }
+
+  // Утилита: "https://image.tmdb.org/t/p/w500/abc.jpg" → "/abc.jpg"
+  function extractPosterPath(url: string): string {
+    const marker = '/t/p/w500'
+    const idx = url.indexOf(marker)
+    return idx >= 0 ? url.slice(idx + marker.length) : url
   }
 }
 </script>
@@ -83,8 +92,8 @@ async function selectFolder() {
       <li v-for="video in videos" :key="video.path" class="video-item">
         <div class="poster-wrap">
           <img
-            v-if="video.tmdb?.poster_data"
-            :src="video.tmdb.poster_data"
+            v-if="video.tmdb?.poster_local"
+            :src="video.tmdb.poster_local"
             :alt="video.tmdb.title"
             class="poster"
           />
