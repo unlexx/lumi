@@ -7,11 +7,13 @@ fn greet(name: &str) -> String {
 mod parser;
 mod scanner;
 mod tmdb;
+mod cache;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Загружаем .env при старте приложения
     dotenvy::dotenv().ok();
+    cache::init_db().expect("Не удалось инициализировать кэш");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
