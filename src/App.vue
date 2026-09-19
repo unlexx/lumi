@@ -3,10 +3,19 @@ import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
+interface ParsedVideo {
+  title: string;
+  year: number | null;
+  resolution: string | null;
+  source: string | null;
+  codec: string | null;
+}
+
 interface VideoFile {
   path: string;
   name: string;
   extension: string;
+  parsed: ParsedVideo;
 }
 
 const videos = ref<VideoFile[]>([]);
@@ -48,9 +57,18 @@ async function selectFolder() {
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="videos.length">Найдено файлов: {{ videos.length }}</p>
 
-    <ul v-if="videos.length">
+    <ul v-if="videos.length" class="video-list">
       <li v-for="video in videos" :key="video.path">
-        {{ video.name }}
+        <div class="title">
+          {{ video.parsed.title }}
+          <span v-if="video.parsed.year" class="year">({{ video.parsed.year }})</span>
+        </div>
+        <div class="meta">
+          <span v-if="video.parsed.resolution">{{ video.parsed.resolution }}</span>
+          <span v-if="video.parsed.source">{{ video.parsed.source }}</span>
+          <span v-if="video.parsed.codec">{{ video.parsed.codec }}</span>
+        </div>
+        <div class="raw">{{ video.name }}</div>
       </li>
     </ul>
   </main>
@@ -63,5 +81,34 @@ async function selectFolder() {
 }
 .error {
   color: red;
+}
+.video-list {
+  list-style: none;
+  padding: 0;
+}
+.video-list li {
+  padding: 1rem 0;
+  border-bottom: 1px solid #eee;
+}
+.title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.year {
+  color: #888;
+  font-weight: 400;
+}
+.meta {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  color: #666;
+  font-size: 0.85rem;
+}
+.raw {
+  margin-top: 0.25rem;
+  color: #aaa;
+  font-size: 0.75rem;
+  font-family: monospace;
 }
 </style>
