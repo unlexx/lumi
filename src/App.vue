@@ -1,138 +1,153 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { ref } from 'vue'
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
+import { onMounted } from 'vue'
+import { onKeyStroke } from '@vueuse/core'
+import Settings from './views/Settings.vue'
+
+const currentView = ref<'library' | 'settings'>('library')
 
 interface ParsedVideo {
-  title: string;
-  year: number | null;
-  resolution: string | null;
-  source: string | null;
-  codec: string | null;
+  title: string
+  year: number | null
+  resolution: string | null
+  source: string | null
+  codec: string | null
 }
 
 interface TmdbInfo {
-  id: number;
-  title: string;
-  overview: string | null;
-  poster_url: string | null;
-  poster_local: string | null;
-  rating: number | null;
+  id: number
+  title: string
+  overview: string | null
+  poster_url: string | null
+  poster_local: string | null
+  rating: number | null
 }
 
 interface VideoFile {
-  path: string;
-  name: string;
-  extension: string;
-  parsed: ParsedVideo;
-  tmdb: TmdbInfo | null;
+  path: string
+  name: string
+  extension: string
+  parsed: ParsedVideo
+  tmdb: TmdbInfo | null
 }
 
-const videos = ref<VideoFile[]>([]);
-const loading = ref(false);
-const error = ref<string | null>(null);
-const selectedVideo = ref<VideoFile | null>(null);
+const videos = ref<VideoFile[]>([])
+const loading = ref(false)
+const error = ref<string | null>(null)
+const selectedVideo = ref<VideoFile | null>(null)
 
-async function selectFolder() {
-  const folder = await open({
-    directory: true,
-    multiple: false,
-    title: "Выберите папку с видео",
-  });
-
-  if (!folder) return;
-
-  loading.value = true;
-  error.value = null;
-
+async function refreshLibrary() {
+  loading.value = true
+  error.value = null
   try {
-    videos.value = await invoke<VideoFile[]>("scan_videos", {
-      folderPath: folder,
-    });
-    loadPosters();
+    videos.value = await invoke<VideoFile[]>('scan_all')
+    loadPosters()
   } catch (e) {
-    error.value = String(e);
-    videos.value = [];
+    error.value = String(e)
+    videos.value = []
   } finally {
-    loading.value = false;
+    loading.value = false
   }
 }
 
+onMounted(refreshLibrary)
+
 async function loadPosters() {
   for (const video of videos.value) {
-    if (!video.tmdb?.poster_url) continue;
+    if (!video.tmdb?.poster_url) continue
     try {
-      const localPath = await invoke<string>("get_poster", {
+      const localPath = await invoke<string>('get_poster', {
         tmdbId: video.tmdb.id,
-        posterPath: extractPosterPath(video.tmdb.poster_url),
-      });
-      video.tmdb.poster_local = convertFileSrc(localPath);
+        posterPath: extractPosterPath(video.tmdb.poster_url)
+      })
+      video.tmdb.poster_local = convertFileSrc(localPath)
     } catch (e) {
-      console.error("Poster error for", video.parsed.title, e);
+      console.error('Poster error for', video.parsed.title, e)
     }
   }
 }
 
 function extractPosterPath(url: string): string {
-  const marker = "/t/p/w500";
-  const idx = url.indexOf(marker);
-  return idx >= 0 ? url.slice(idx + marker.length) : url;
+  const marker = '/t/p/w500'
+  const idx = url.indexOf(marker)
+  return idx >= 0 ? url.slice(idx + marker.length) : url
 }
 
 async function playVideo(video: VideoFile) {
   try {
-    await invoke("play_video", { path: video.path });
+    await invoke('play_video', { path: video.path })
   } catch (e) {
-    console.error("Play error:", e);
-    error.value = String(e);
+    console.error('Play error:', e)
+    error.value = String(e)
   }
 }
 
 function openDetails(video: VideoFile) {
-  selectedVideo.value = video;
+  selectedVideo.value = video
 }
 
 function closeDetails() {
-  selectedVideo.value = null;
+  selectedVideo.value = null
 }
+
+onKeyStroke('Backspace', (e) => {
+  if (currentView.value === 'settings') {
+    e.preventDefault()
+    currentView.value = 'library'
+  }
+})
+
+onKeyStroke('Escape', () => {
+  if (selectedVideo.value) selectedVideo.value = null
+})
 </script>
 
 <template>
   <main class="app">
     <header class="toolbar">
-      <h1>Lumi</h1>
-      <button @click="selectFolder" :disabled="loading">
-        {{ loading ? "Сканирование..." : "Выбрать папку" }}
-      </button>
+      <div class="header-left">
+        <button
+          v-if="currentView === 'settings'"
+          class="back-arrow"
+          @click="currentView = 'library'"
+          title="Назад (Backspace)"
+        >
+          ←
+        </button>
+        <h1>Lumi</h1>
+      </div>
+      <nav class="tabs">
+        <button :class="{ active: currentView === 'library' }" @click="currentView = 'library'">
+          Библиотека
+        </button>
+        <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
+          Настройки
+        </button>
+      </nav>
     </header>
-
-    <p v-if="error" class="error">{{ error }}</p>
-
-    <section v-if="videos.length" class="grid">
-      <article
-        v-for="video in videos"
-        :key="video.path"
-        class="card"
-        @click="openDetails(video)"
-      >
-        <div class="poster-wrap">
-          <img
-            v-if="video.tmdb?.poster_local"
-            :src="video.tmdb.poster_local"
-            :alt="video.tmdb.title"
-            class="poster"
-            loading="lazy"
-          />
-          <div v-else class="poster placeholder">Нет постера</div>
-          <div v-if="video.tmdb?.rating" class="rating">
-            ★ {{ video.tmdb.rating.toFixed(1) }}
+    <Settings v-if="currentView === 'settings'" />
+    <div v-else>
+      <p v-if="error" class="error">{{ error }}</p>
+      <section v-if="videos.length" class="grid">
+        <article v-for="video in videos" :key="video.path" class="card" @click="openDetails(video)">
+          <div class="poster-wrap">
+            <img
+              v-if="video.tmdb?.poster_local"
+              :src="video.tmdb.poster_local"
+              :alt="video.tmdb.title"
+              class="poster"
+              loading="lazy"
+            />
+            <div v-else class="poster placeholder">Нет постера</div>
+            <div v-if="video.tmdb?.rating" class="rating">★ {{ video.tmdb.rating.toFixed(1) }}</div>
           </div>
-        </div>
-        <div class="card-title">{{ video.tmdb?.title || video.parsed.title }}</div>
-        <div class="card-year">{{ video.parsed.year || "" }}</div>
-      </article>
-    </section>
-
+          <div class="card-title">{{ video.tmdb?.title || video.parsed.title }}</div>
+          <div class="card-year">{{ video.parsed.year || '' }}</div>
+        </article>
+      </section>
+    </div>
     <!-- Модалка с деталями -->
     <div v-if="selectedVideo" class="modal-backdrop" @click="closeDetails">
       <div class="modal" @click.stop>
@@ -157,13 +172,13 @@ function closeDetails() {
               {{ selectedVideo.tmdb.overview }}
             </p>
             <div class="tags">
-              <span v-if="selectedVideo.parsed.resolution">{{ selectedVideo.parsed.resolution }}</span>
+              <span v-if="selectedVideo.parsed.resolution">{{
+                selectedVideo.parsed.resolution
+              }}</span>
               <span v-if="selectedVideo.parsed.source">{{ selectedVideo.parsed.source }}</span>
               <span v-if="selectedVideo.parsed.codec">{{ selectedVideo.parsed.codec }}</span>
             </div>
-            <button class="play-btn" @click="playVideo(selectedVideo)">
-              ▶ Смотреть
-            </button>
+            <button class="play-btn" @click="playVideo(selectedVideo)">▶ Смотреть</button>
             <div class="file-path">{{ selectedVideo.name }}</div>
           </div>
         </div>
@@ -173,13 +188,15 @@ function closeDetails() {
 </template>
 
 <style>
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
   background: #14161a;
   color: #e6e6e6;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 .app {
@@ -322,7 +339,9 @@ body {
   line-height: 1;
 }
 
-.close:hover { color: #fff; }
+.close:hover {
+  color: #fff;
+}
 
 .modal-content {
   display: flex;
@@ -335,14 +354,19 @@ body {
   flex-shrink: 0;
 }
 
-.modal-info { flex: 1; }
+.modal-info {
+  flex: 1;
+}
 
 .modal-info h2 {
   margin: 0 0 0.5rem 0;
   font-size: 1.4rem;
 }
 
-.year { color: #888; font-weight: 400; }
+.year {
+  color: #888;
+  font-weight: 400;
+}
 
 .modal-rating {
   color: #ffd166;
@@ -380,7 +404,9 @@ body {
   margin-top: 0.5rem;
 }
 
-.play-btn:hover { background: #3a8eef; }
+.play-btn:hover {
+  background: #3a8eef;
+}
 
 .file-path {
   margin-top: 1rem;
@@ -388,5 +414,43 @@ body {
   color: #666;
   font-family: monospace;
   word-break: break-all;
+}
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+.tabs button {
+  background: transparent;
+  border: none;
+  color: #888;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+.tabs button:hover {
+  color: #e6e6e6;
+}
+.tabs button.active {
+  background: #2a2e35;
+  color: #e6e6e6;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.back-arrow {
+  background: transparent;
+  border: none;
+  color: #aaa;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0 0.5rem;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+.back-arrow:hover {
+  color: #fff;
 }
 </style>
