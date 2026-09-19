@@ -19,7 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scanner::scan_videos,
-    tmdb::fetch_poster
+            tmdb::get_poster
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
