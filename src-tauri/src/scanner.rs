@@ -13,6 +13,7 @@ pub struct VideoFile {
     pub parsed: ParsedVideo,
     pub tmdb: Option<TmdbInfo>,
     pub media_type: MediaType,
+    pub watched: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -93,7 +94,7 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
         .ok();
 
         println!("Scanning: {} ({:?})", folder.path, folder.media_type);
-
+let conn = crate::cache::init_db().ok();
         for entry in WalkDir::new(&folder.path)
             .follow_links(false)
             .into_iter()
@@ -118,14 +119,18 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
 
                 let parsed = parse_filename(&name);
 
-                videos.push(VideoFile {
-                    path: file_path.to_string_lossy().to_string(),
-                    name,
-                    extension: ext_str,
-                    parsed,
-                    tmdb: None,
-                    media_type: folder.media_type.clone(),
-                });
+videos.push(VideoFile {
+    path: file_path.to_string_lossy().to_string(),
+    name,
+    extension: ext_str,
+    parsed,
+    tmdb: None,
+    media_type: folder.media_type.clone(),
+    watched: conn
+        .as_ref()
+        .map(|c| crate::cache::is_watched(c, &file_path.to_string_lossy()))
+        .unwrap_or(false),
+});
             }
         }
     }

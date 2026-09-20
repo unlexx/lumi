@@ -1,4 +1,4 @@
-use crate::tmdb::{TmdbMovie, TmdbShow};
+use crate::tmdb::TmdbMovie;
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::path::PathBuf;
@@ -74,6 +74,16 @@ pub fn init_db() -> SqlResult<Connection> {
         "CREATE INDEX IF NOT EXISTS idx_tv_name ON tv_shows(name)",
         [],
     )?;
+conn.execute(
+    "CREATE TABLE IF NOT EXISTS watch_status (
+        file_path TEXT PRIMARY KEY,
+        watched INTEGER NOT NULL DEFAULT 0,
+        position REAL,
+        duration REAL,
+        updated_at INTEGER NOT NULL
+    )",
+    [],
+)?;
 
     Ok(conn)
 }
@@ -175,6 +185,45 @@ pub fn save_tv_show(conn: &Connection, show: &crate::tmdb::TmdbShow) -> SqlResul
             show.first_air_date,
             now,
         ],
+    )?;
+
+    Ok(())
+}
+
+pub fn is_watched(conn: &Connection, file_path: &str) -> bool {
+    conn.query_row(
+        "SELECT watched FROM watch_status WHERE file_path = ?1",
+        rusqlite::params![file_path],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .unwrap_or(None)
+    .map(|w| w != 0)
+    .unwrap_or(false)
+}
+
+pub fn mark_watched(
+    conn: &Connection,
+    file_path: &str,
+    position: f64,
+    duration: f64,
+) -> SqlResult<()> {
+    let watched = if duration > 0.0 && position / duration >= 0.95 {
+        1i64
+    } else {
+        0i64
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    conn.execute(
+        "INSERT OR REPLACE INTO watch_status
+         (file_path, watched, position, duration, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![file_path, watched, position, duration, now],
     )?;
 
     Ok(())
