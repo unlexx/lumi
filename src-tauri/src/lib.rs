@@ -32,6 +32,8 @@ pub fn run() {
             config::remove_folder,
             scanner::get_continue_watching,
             scanner::set_watched_bulk,
+            tmdb::search_tmdb_manual,
+            tmdb::apply_tmdb_match,
             toggle_fullscreen,
         ])
         .run(tauri::generate_context!())
