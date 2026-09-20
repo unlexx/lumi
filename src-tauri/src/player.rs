@@ -82,12 +82,13 @@ fn play_and_track(
                         }
                     );
 
-                    // Эмитим событие во фронтенд
                     app.emit(
                         "watch_status_updated",
                         serde_json::json!({
                             "path": file_path,
                             "watched": watched,
+                            "position": last_position,
+                            "duration": last_duration,
                         }),
                     )
                     .ok();
