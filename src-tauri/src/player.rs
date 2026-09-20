@@ -15,7 +15,7 @@ pub async fn play_video(app: tauri::AppHandle, path: String) -> Result<(), Strin
 }
 
 fn play_and_track(file_path: &str, app: tauri::AppHandle) -> Result<(), String> {
-      let mut child = mpv::launch(file_path)?;
+    let mut child = mpv::launch(file_path)?;
 
     std::thread::sleep(Duration::from_millis(2000));
 
@@ -58,37 +58,33 @@ fn play_and_track(file_path: &str, app: tauri::AppHandle) -> Result<(), String> 
         if let Err(e) = cache::mark_watched(&conn, file_path, last_position, last_duration) {
             eprintln!("Failed to save watch status: {}", e);
         } else {
-            let watched = last_duration > 0.0 && last_position / last_duration >= 0.95;
-            println!(
-                "  → Marked as {}",
-                if watched { "WATCHED" } else { "in progress" }
-            );
-if let Ok(conn) = cache::init_db() {
-    if let Err(e) = cache::mark_watched(&conn, file_path, last_position, last_duration) {
-        eprintln!("Failed to save watch status: {}", e);
-    } else {
-        let watched = last_duration > 0.0 && last_position / last_duration >= 0.95;
-        println!(
-            "  → Marked as {} ({:.1}%)",
-            if watched { "WATCHED" } else { "in progress" },
-            if last_duration > 0.0 {
-                last_position / last_duration * 100.0
-            } else {
-                0.0
-            }
-        );
+            if let Ok(conn) = cache::init_db() {
+                if let Err(e) = cache::mark_watched(&conn, file_path, last_position, last_duration)
+                {
+                    eprintln!("Failed to save watch status: {}", e);
+                } else {
+                    let watched = last_duration > 0.0 && last_position / last_duration >= 0.95;
+                    println!(
+                        "  → Marked as {} ({:.1}%)",
+                        if watched { "WATCHED" } else { "in progress" },
+                        if last_duration > 0.0 {
+                            last_position / last_duration * 100.0
+                        } else {
+                            0.0
+                        }
+                    );
 
-        // Эмитим событие во фронтенд
-        app.emit(
-            "watch_status_updated",
-            serde_json::json!({
-                "path": file_path,
-                "watched": watched,
-            }),
-        )
-        .ok();
-    }
-}
+                    // Эмитим событие во фронтенд
+                    app.emit(
+                        "watch_status_updated",
+                        serde_json::json!({
+                            "path": file_path,
+                            "watched": watched,
+                        }),
+                    )
+                    .ok();
+                }
+            }
         }
     }
 
