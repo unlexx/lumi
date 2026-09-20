@@ -1141,7 +1141,7 @@ body {
 }
 .menu-btn {
   position: absolute;
-  top: 6px;
+  bottom: 6px;
   right: 6px;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
@@ -1173,13 +1173,13 @@ body {
 
 /* Рейтинг сдвигаем левее, чтобы не конфликтовал с «⋮» */
 .rating {
-  right: 40px; /* было 6px */
+  right: 6px;
 }
 
 .context-menu {
   position: absolute;
-  top: 38px;
-  left: 6px; /* всегда вправо от кнопки */
+  bottom: 38px; /* было top: 38px */
+  right: 6px;
   background: #1e2127;
   border: 1px solid #3a3f47;
   border-radius: 6px;
