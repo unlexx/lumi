@@ -76,6 +76,14 @@ interface ContinueItem {
   media_type: 'movie' | 'tv_shows'
 }
 
+interface TmdbSearchResult {
+  id: number
+  title: string
+  original_title: string | null
+  overview: string | null
+  poster_url: string | null
+  year: number | null
+}
 // === Состояние ===
 
 const library = ref<Library>({ movies: [], tv_shows: [] })
@@ -85,6 +93,13 @@ const selectedVideo = ref<VideoFile | null>(null)
 const selectedShow = ref<TvShow | null>(null)
 const continueWatching = ref<ContinueItem[]>([])
 const openMenuPath = ref<string | null>(null)
+const matchModalOpen = ref(false)
+const matchQuery = ref('')
+const matchResults = ref<TmdbSearchResult[]>([])
+const matchLoading = ref(false)
+const matchTarget = ref<{ path: string; media_type: 'movie' | 'tv_shows'; title: string } | null>(
+  null
+)
 
 // === Загрузка ===
 
@@ -392,6 +407,104 @@ async function markShowWatched(show: TvShow, watched: boolean) {
   await loadContinueWatching()
 }
 
+function openMatchModal(path: string, media_type: 'movie' | 'tv_shows', title: string) {
+  matchTarget.value = { path, media_type, title }
+  matchQuery.value = title
+  matchResults.value = []
+  matchModalOpen.value = true
+  openMenuPath.value = null
+  // Автоматически искать при открытии
+  searchMatch()
+}
+
+function closeMatchModal() {
+  matchModalOpen.value = false
+  matchTarget.value = null
+  matchResults.value = []
+}
+
+async function searchMatch() {
+  if (!matchTarget.value) return
+  matchLoading.value = true
+  try {
+    matchResults.value = await invoke<TmdbSearchResult[]>('search_tmdb_manual', {
+      query: matchQuery.value,
+      mediaType: matchTarget.value.media_type
+    })
+  } catch (e) {
+    console.error('Search error:', e)
+  } finally {
+    matchLoading.value = false
+  }
+}
+
+async function applyMatch(result: TmdbSearchResult) {
+  if (!matchTarget.value) return
+  try {
+    const newInfo = await invoke<{
+      tmdb_id: number
+      title: string
+      original_title: string | null
+      overview: string | null
+      poster_url: string | null
+      rating: number | null
+    }>('apply_tmdb_match', {
+      tmdbId: result.id,
+      mediaType: matchTarget.value.media_type
+    })
+
+    // Обновляем карточку локально
+    const target = matchTarget.value
+    if (target.media_type === 'movie') {
+      const movie = library.value.movies.find((m) => m.path === target.path)
+      if (movie) {
+        movie.tmdb = {
+          id: newInfo.tmdb_id,
+          title: newInfo.title,
+          original_title: newInfo.original_title,
+          overview: newInfo.overview,
+          poster_url: newInfo.poster_url,
+          poster_local: null,
+          rating: newInfo.rating
+        }
+        // Скачиваем новый постер
+        if (newInfo.poster_url) {
+          const localPath = await invoke<string>('get_poster', {
+            tmdbId: newInfo.tmdb_id,
+            posterPath: extractPosterPath(newInfo.poster_url)
+          })
+          movie.tmdb.poster_local = convertFileSrc(localPath)
+        }
+      }
+    } else {
+      // Для сериала — обновляем show.tmdb
+      const show = library.value.tv_shows.find((s) => s.title === target.title)
+      if (show) {
+        show.tmdb = {
+          id: newInfo.tmdb_id,
+          title: newInfo.title,
+          original_title: newInfo.original_title,
+          overview: newInfo.overview,
+          poster_url: newInfo.poster_url,
+          poster_local: null,
+          rating: newInfo.rating
+        }
+        show.title = newInfo.title
+        if (newInfo.poster_url) {
+          const localPath = await invoke<string>('get_poster', {
+            tmdbId: newInfo.tmdb_id,
+            posterPath: extractPosterPath(newInfo.poster_url)
+          })
+          show.tmdb.poster_local = convertFileSrc(localPath)
+        }
+      }
+    }
+
+    closeMatchModal()
+  } catch (e) {
+    console.error('Apply error:', e)
+  }
+}
 // === Клавиатура ===
 
 onKeyStroke('Backspace', (e) => {
@@ -541,6 +654,13 @@ onKeyStroke('Escape', () => {
                     Пометить просмотренным
                   </button>
                   <button v-else @click="markMovieWatched(movie, false)">Непросмотренно</button>
+                  <button
+                    @click="
+                      openMatchModal(movie.path, 'movie', movie.tmdb?.title || movie.parsed.title)
+                    "
+                  >
+                    Сопоставить
+                  </button>
                 </div>
               </div>
               <div class="card-title">
@@ -585,6 +705,7 @@ onKeyStroke('Escape', () => {
                   Пометить просмотренным
                 </button>
                 <button v-else @click="markShowWatched(show, false)">Непросмотренно</button>
+                <button @click="openMatchModal('', 'tv_shows', show.title)">Сопоставить</button>
               </div>
               <div class="card-title">{{ show.title }}</div>
               <div class="card-year">
@@ -671,6 +792,53 @@ onKeyStroke('Escape', () => {
       </div>
     </div>
   </main>
+  <div v-if="matchModalOpen" class="modal-backdrop" @click="closeMatchModal">
+    <div class="modal match-modal" @click.stop>
+      <button class="close" @click="closeMatchModal">×</button>
+      <h2>Сопоставить с TMDB</h2>
+
+      <div class="search-row">
+        <input
+          v-model="matchQuery"
+          type="text"
+          placeholder="Название фильма или сериала"
+          @keydown.enter="searchMatch"
+        />
+        <button @click="searchMatch" :disabled="matchLoading">
+          {{ matchLoading ? 'Поиск...' : 'Искать' }}
+        </button>
+      </div>
+
+      <div v-if="matchResults.length" class="results">
+        <article
+          v-for="result in matchResults"
+          :key="result.id"
+          class="result-item"
+          @click="applyMatch(result)"
+        >
+          <div class="result-info">
+            <div class="result-title">
+              {{ result.title }}
+              <span v-if="result.year" class="result-year">({{ result.year }})</span>
+            </div>
+            <div
+              v-if="result.original_title && result.original_title !== result.title"
+              class="result-original"
+            >
+              {{ result.original_title }}
+            </div>
+            <div v-if="result.overview" class="result-overview">
+              {{ result.overview }}
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <p v-else-if="!matchLoading && matchQuery" class="no-results">
+        Ничего не найдено. Попробуйте другое название.
+      </p>
+    </div>
+  </div>
 </template>
 
 <style>
@@ -1211,5 +1379,119 @@ body {
 
 .context-menu button:hover {
   background: #2a2e35;
+}
+
+.match-modal {
+  max-width: 700px;
+}
+
+.search-row {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.search-row input {
+  flex: 1;
+  background: #2a2e35;
+  border: 1px solid #3a3f47;
+  color: #e6e6e6;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.search-row button {
+  background: #4a9eff;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1.25rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.search-row button:hover:not(:disabled) {
+  background: #3a8eef;
+}
+
+.search-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.result-item {
+  display: flex;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.result-item:hover {
+  background: #2a2e35;
+}
+
+.result-poster {
+  width: 60px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.result-poster.placeholder {
+  background: #2a2e35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.75rem;
+}
+
+.result-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.result-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.result-year {
+  color: #888;
+  font-weight: 400;
+}
+
+.result-original {
+  color: #888;
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+}
+
+.result-overview {
+  color: #aaa;
+  font-size: 0.8rem;
+  margin-top: 0.35rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.no-results {
+  color: #888;
+  text-align: center;
+  padding: 2rem 0;
 }
 </style>

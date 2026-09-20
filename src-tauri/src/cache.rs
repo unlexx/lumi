@@ -1,4 +1,4 @@
-use crate::tmdb::TmdbMovie;
+use crate::tmdb::{MatchResult, TmdbMovie};
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::path::PathBuf;
@@ -312,5 +312,58 @@ pub fn set_watched_bulk(conn: &Connection, paths: &[String], watched: bool) -> S
     }
 
     tx.commit()?;
+    Ok(())
+}
+
+
+pub fn save_manual_match(result: &MatchResult, media_type: &str) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let poster_path = result
+        .poster_url
+        .as_ref()
+        .and_then(|url| url.split("/t/p/w500").nth(1))
+        .map(|s| s.to_string());
+
+    if media_type == "movie" {
+        conn.execute(
+            "INSERT OR REPLACE INTO movies
+             (tmdb_id, title, original_title, overview, poster_path, rating, release_date, cached_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                result.tmdb_id,
+                result.title,
+                result.original_title,
+                result.overview,
+                poster_path,
+                result.rating,
+                None::<String>,
+                now,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT OR REPLACE INTO tv_shows
+             (tmdb_id, name, original_name, overview, poster_path, rating, first_air_date, cached_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                result.tmdb_id,
+                result.title,
+                result.original_title,
+                result.overview,
+                poster_path,
+                result.rating,
+                None::<String>,
+                now,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }

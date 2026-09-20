@@ -1,6 +1,6 @@
 use crate::cache;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug)]
 pub struct TmdbSearchResponse {
@@ -32,6 +32,16 @@ pub struct TmdbShow {
     pub poster_path: Option<String>,
     pub vote_average: Option<f64>,
     pub first_air_date: Option<String>, // у сериалов "first_air_date", не "release_date"
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct TmdbSearchResult {
+    pub id: u32,
+    pub title: String,
+    pub original_title: Option<String>,
+    pub overview: Option<String>,
+    pub poster_url: Option<String>,
+    pub year: Option<u32>,
 }
 
 #[tauri::command]
@@ -268,6 +278,155 @@ pub async fn get_or_fetch_tv(
     } else {
         println!("  → No TV results for '{}'", title);
     }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn search_tmdb_manual(
+    query: String,
+    media_type: String,
+) -> Result<Vec<TmdbSearchResult>, String> {
+    let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
+    let client = build_client().map_err(|e| e.to_string())?;
+
+    let endpoint = match media_type.as_str() {
+        "movie" => "movie",
+        "tv_shows" => "tv",
+        _ => return Err(format!("Invalid media_type: {}", media_type)),
+    };
+
+    let url = format!(
+        "https://api.themoviedb.org/3/search/{}?api_key={}&query={}&language=ru-RU",
+        endpoint,
+        api_key,
+        urlencoding::encode(&query)
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("TMDB status: {}", response.status()));
+    }
+
+    let raw: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    let results = raw["results"]
+        .as_array()
+        .ok_or("No results array")?
+        .iter()
+        .map(|item| {
+            let title = item["title"]
+                .as_str()
+                .or_else(|| item["name"].as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let original_title = item["original_title"]
+                .as_str()
+                .or_else(|| item["original_name"].as_str())
+                .map(|s| s.to_string());
+
+            let date = item["release_date"]
+                .as_str()
+                .or_else(|| item["first_air_date"].as_str());
+
+            let year = date
+                .and_then(|d| d.get(..4))
+                .and_then(|y| y.parse::<u32>().ok());
+
+            let poster_url = item["poster_path"]
+                .as_str()
+                .map(|p| format!("https://image.tmdb.org/t/p/w200{}", p));
+
+            TmdbSearchResult {
+                id: item["id"].as_u64().unwrap_or(0) as u32,
+                title,
+                original_title,
+                overview: item["overview"].as_str().map(|s| s.to_string()),
+                poster_url,
+                year,
+            }
+        })
+        .collect();
+
+    Ok(results)
+}
+
+#[derive(Serialize)]
+pub struct MatchResult {
+    pub tmdb_id: u32,
+    pub title: String,
+    pub original_title: Option<String>,
+    pub overview: Option<String>,
+    pub poster_url: Option<String>,
+    pub rating: Option<f64>,
+}
+
+#[tauri::command]
+pub async fn apply_tmdb_match(tmdb_id: u32, media_type: String) -> Result<MatchResult, String> {
+    let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
+    let client = build_client().map_err(|e| e.to_string())?;
+
+    let endpoint = match media_type.as_str() {
+        "movie" => "movie",
+        "tv_shows" => "tv",
+        _ => return Err(format!("Invalid media_type: {}", media_type)),
+    };
+
+    let url = format!(
+        "https://api.themoviedb.org/3/{}/{}?api_key={}&language=ru-RU",
+        endpoint, tmdb_id, api_key
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("TMDB status: {}", response.status()));
+    }
+
+    let raw: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    let title = raw["title"]
+        .as_str()
+        .or_else(|| raw["name"].as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let original_title = raw["original_title"]
+        .as_str()
+        .or_else(|| raw["original_name"].as_str())
+        .map(|s| s.to_string());
+
+    let poster_url = raw["poster_path"]
+        .as_str()
+        .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p));
+
+    let result = MatchResult {
+        tmdb_id,
+        title,
+        original_title,
+        overview: raw["overview"].as_str().map(|s| s.to_string()),
+        poster_url,
+        rating: raw["vote_average"].as_f64(),
+    };
+
+    // Сохраняем в кэш
+    cache::save_manual_match(&result, media_type.as_str())?;
 
     Ok(result)
 }
