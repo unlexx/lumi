@@ -82,12 +82,13 @@ interface TmdbSearchResult {
   original_title: string | null
   overview: string | null
   poster_url: string | null
+  poster_data: string | null
   year: number | null
 }
 // === Состояние ===
 
 const library = ref<Library>({ movies: [], tv_shows: [] })
-const loading = ref(false)
+const loading = ref(true)
 const error = ref<string | null>(null)
 const selectedVideo = ref<VideoFile | null>(null)
 const selectedShow = ref<TvShow | null>(null)
@@ -161,6 +162,7 @@ onMounted(async () => {
     // Обновить секцию "Продолжить просмотр"
     await loadContinueWatching()
   })
+  refreshLibrary()
 })
 
 async function loadPosters() {
@@ -427,10 +429,22 @@ async function searchMatch() {
   if (!matchTarget.value) return
   matchLoading.value = true
   try {
-    matchResults.value = await invoke<TmdbSearchResult[]>('search_tmdb_manual', {
+    const results = await invoke<TmdbSearchResult[]>('search_tmdb_manual', {
       query: matchQuery.value,
       mediaType: matchTarget.value.media_type
     })
+    matchResults.value = results
+
+    // Подгружаем постеры в фоне
+    for (const result of matchResults.value) {
+      if (!result.poster_url) continue
+      result.poster_data = null
+      invoke<string>('fetch_poster_preview', { url: result.poster_url })
+        .then((data) => {
+          result.poster_data = data
+        })
+        .catch((e) => console.error('Poster preview error:', e))
+    }
   } catch (e) {
     console.error('Search error:', e)
   } finally {
@@ -512,11 +526,6 @@ onKeyStroke('Backspace', (e) => {
     e.preventDefault()
     currentView.value = 'library'
   }
-})
-
-onKeyStroke('Escape', () => {
-  if (selectedVideo.value) selectedVideo.value = null
-  if (selectedShow.value) selectedShow.value = null
 })
 
 onKeyStroke('F11', (e) => {
@@ -816,6 +825,10 @@ onKeyStroke('Escape', () => {
           class="result-item"
           @click="applyMatch(result)"
         >
+          <img v-if="result.poster_data" :src="result.poster_data" class="result-poster" />
+          <div v-else class="result-poster placeholder">
+            {{ result.poster_url ? '…' : '—' }}
+          </div>
           <div class="result-info">
             <div class="result-title">
               {{ result.title }}
@@ -833,7 +846,6 @@ onKeyStroke('Escape', () => {
           </div>
         </article>
       </div>
-
       <p v-else-if="!matchLoading && matchQuery" class="no-results">
         Ничего не найдено. Попробуйте другое название.
       </p>
@@ -1493,5 +1505,14 @@ body {
   color: #888;
   text-align: center;
   padding: 2rem 0;
+}
+
+.result-poster.placeholder {
+  background: #2a2e35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.9rem;
 }
 </style>
