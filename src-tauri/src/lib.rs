@@ -1,3 +1,4 @@
+use tauri::Manager;
 mod cache;
 mod config;
 mod mpv;
@@ -16,6 +17,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_fullscreen(true).ok();
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             scanner::scan_all,
             tmdb::get_poster,
@@ -25,7 +32,16 @@ pub fn run() {
             config::remove_folder,
             scanner::get_continue_watching,
             scanner::set_watched_bulk,
+            toggle_fullscreen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[tauri::command]
+fn toggle_fullscreen(window: tauri::Window) -> Result<(), String> {
+    let is_fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+    window
+        .set_fullscreen(!is_fullscreen)
+        .map_err(|e| e.to_string())
 }

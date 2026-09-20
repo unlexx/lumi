@@ -113,30 +113,40 @@ onMounted(async () => {
     }
   })
 
-  await listen('watch_status_updated', (event) => {
-    const { path, watched } = event.payload as { path: string; watched: boolean }
+  await listen('watch_status_updated', async (event) => {
+    const { path, watched, position, duration } = event.payload as {
+      path: string
+      watched: boolean
+      position: number
+      duration: number
+    }
 
-    // Проверяем фильмы
+    // Фильм?
     const movie = library.value.movies.find((m) => m.path === path)
     if (movie) {
       movie.watched = watched
-      return
-    }
-
-    // Проверяем эпизоды сериалов
-    for (const show of library.value.tv_shows) {
-      for (const season of show.seasons) {
-        const episode = season.episodes.find((e) => e.path === path)
-        if (episode) {
-          episode.watched = watched
-          return
+      movie.position = position
+      movie.duration = duration
+    } else {
+      // Эпизод?
+      for (const show of library.value.tv_shows) {
+        for (const season of show.seasons) {
+          const ep = season.episodes.find((e) => e.path === path)
+          if (ep) {
+            ep.watched = watched
+            ep.position = position
+            ep.duration = duration
+            break
+          }
         }
       }
     }
+
+    // Обновить секцию "Продолжить просмотр"
+    await loadContinueWatching()
   })
-  await loadContinueWatching()
-  refreshLibrary()
 })
+
 async function loadPosters() {
   for (const movie of library.value.movies) {
     if (!movie.tmdb?.poster_url) continue
@@ -393,6 +403,24 @@ onKeyStroke('Backspace', (e) => {
 onKeyStroke('Escape', () => {
   if (selectedVideo.value) selectedVideo.value = null
   if (selectedShow.value) selectedShow.value = null
+})
+
+onKeyStroke('F11', (e) => {
+  e.preventDefault()
+  invoke('toggle_fullscreen').catch(console.error)
+})
+
+onKeyStroke('Escape', () => {
+  // Если открыта модалка — закрываем её, иначе выходим из полноэкранного
+  if (selectedVideo.value) {
+    selectedVideo.value = null
+  } else if (selectedShow.value) {
+    selectedShow.value = null
+  } else if (openMenuPath.value) {
+    openMenuPath.value = null
+  } else {
+    invoke('toggle_fullscreen').catch(console.error)
+  }
 })
 </script>
 
