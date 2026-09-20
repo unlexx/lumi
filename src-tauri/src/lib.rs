@@ -1,11 +1,11 @@
+mod cache;
+mod config;
+mod mpv;
 mod parser;
+mod player;
 mod scanner;
 mod tmdb;
-mod cache;
-mod player;
-mod config;
 mod tv_parser;
-mod mpv;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,7 +14,7 @@ pub fn run() {
     cache::init_db().expect("Не удалось инициализировать кэш");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())  
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scanner::scan_all,
@@ -24,6 +24,7 @@ pub fn run() {
             config::add_folder,
             config::remove_folder,
             scanner::get_continue_watching,
+            scanner::set_watched_bulk,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

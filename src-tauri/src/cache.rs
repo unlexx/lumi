@@ -292,3 +292,37 @@ pub fn get_watch_info(conn: &Connection, file_path: &str) -> WatchInfo {
     .unwrap_or(None)
     .unwrap_or_default()
 }
+
+pub fn set_watched_bulk(
+    conn: &Connection,
+    paths: &[String],
+    watched: bool,
+) -> SqlResult<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let tx = conn.unchecked_transaction()?;
+
+    for path in paths {
+        if watched {
+            tx.execute(
+                "INSERT INTO watch_status (file_path, watched, position, duration, updated_at)
+                 VALUES (?1, 1, 0, 0, ?2)
+                 ON CONFLICT(file_path) DO UPDATE SET watched = 1",
+                rusqlite::params![path, now],
+            )?;
+        } else {
+            tx.execute(
+                "INSERT INTO watch_status (file_path, watched, position, duration, updated_at)
+                 VALUES (?1, 0, 0, 0, ?2)
+                 ON CONFLICT(file_path) DO UPDATE SET watched = 0, position = 0",
+                rusqlite::params![path, now],
+            )?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(())
+}

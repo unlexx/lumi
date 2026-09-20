@@ -323,3 +323,10 @@ fn extract_title_from_path(path: &str) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string())
 }
+
+#[tauri::command]
+pub fn set_watched_bulk(paths: Vec<String>, watched: bool) -> Result<(), String> {
+    let conn = crate::cache::init_db().map_err(|e| e.to_string())?;
+    crate::cache::set_watched_bulk(&conn, &paths, watched)
+        .map_err(|e| e.to_string())
+}
