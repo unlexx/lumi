@@ -4,18 +4,26 @@ use std::time::Duration;
 use tauri::Emitter;
 
 #[tauri::command]
-pub async fn play_video(app: tauri::AppHandle, path: String) -> Result<(), String> {
+pub async fn play_video(
+    app: tauri::AppHandle,
+    path: String,
+    start_position: Option<f64>,
+) -> Result<(), String> {
     let file_path = path.clone();
     std::thread::spawn(move || {
-        if let Err(e) = play_and_track(&file_path, app) {
+        if let Err(e) = play_and_track(&file_path, start_position, app) {
             eprintln!("Playback error: {}", e);
         }
     });
     Ok(())
 }
 
-fn play_and_track(file_path: &str, app: tauri::AppHandle) -> Result<(), String> {
-    let mut child = mpv::launch(file_path)?;
+fn play_and_track(
+    file_path: &str,
+    start_position: Option<f64>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let mut child = mpv::launch(file_path, start_position)?;
 
     std::thread::sleep(Duration::from_millis(2000));
 

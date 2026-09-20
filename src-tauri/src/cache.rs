@@ -13,6 +13,25 @@ pub struct CachedShow {
     pub first_air_date: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WatchStatus {
+    pub file_path: String,
+    pub watched: bool,
+    pub position: f64,
+    pub duration: f64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedMovie {
+    pub tmdb_id: u32,
+    pub title: String,
+    pub overview: Option<String>,
+    pub poster_path: Option<String>,
+    pub rating: Option<f64>,
+    pub release_date: Option<String>,
+}
+
 pub fn project_dirs() -> ProjectDirs {
     ProjectDirs::from("dev", "unlexx", "lumi")
         .expect("Не удалось определить директории проекта")
@@ -88,15 +107,6 @@ conn.execute(
     Ok(conn)
 }
 
-#[derive(Debug, Clone)]
-pub struct CachedMovie {
-    pub tmdb_id: u32,
-    pub title: String,
-    pub overview: Option<String>,
-    pub poster_path: Option<String>,
-    pub rating: Option<f64>,
-    pub release_date: Option<String>,
-}
 
 pub fn find_cached(conn: &Connection, title: &str) -> Option<CachedMovie> {
     conn.query_row(
@@ -227,4 +237,34 @@ pub fn mark_watched(
     )?;
 
     Ok(())
+}
+
+pub fn get_in_progress(conn: &Connection) -> Vec<WatchStatus> {
+    let mut stmt = match conn.prepare(
+        "SELECT file_path, watched, position, duration, updated_at
+         FROM watch_status
+         WHERE watched = 0
+           AND duration > 0
+           AND position / duration >= 0.05
+           AND position / duration <= 0.95
+         ORDER BY updated_at DESC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let rows = stmt.query_map([], |row| {
+        Ok(WatchStatus {
+            file_path: row.get(0)?,
+            watched: row.get::<_, i64>(1)? != 0,
+            position: row.get(2)?,
+            duration: row.get(3)?,
+            updated_at: row.get(4)?,
+        })
+    });
+
+    match rows {
+        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
 }

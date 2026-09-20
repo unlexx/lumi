@@ -33,7 +33,7 @@ interface VideoFile {
   parsed: ParsedVideo
   tmdb: TmdbInfo | null
   media_type: 'movie' | 'tv_shows'
-  watched: boolean // ← новое
+  watched: boolean
 }
 
 interface Episode {
@@ -61,6 +61,16 @@ interface Library {
   tv_shows: TvShow[]
 }
 
+interface ContinueItem {
+  path: string
+  title: string
+  poster_url: string | null
+  position: number
+  duration: number
+  progress: number
+  media_type: 'movie' | 'tv_shows'
+}
+
 // === Состояние ===
 
 const library = ref<Library>({ movies: [], tv_shows: [] })
@@ -68,6 +78,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const selectedVideo = ref<VideoFile | null>(null)
 const selectedShow = ref<TvShow | null>(null)
+const continueWatching = ref<ContinueItem[]>([])
 
 // === Загрузка ===
 
@@ -77,7 +88,8 @@ async function refreshLibrary() {
   scanProgress.value = null
   try {
     library.value = await invoke<Library>('scan_all')
-    loadPosters()
+    await loadPosters()
+    await loadContinueWatching()
   } catch (e) {
     error.value = String(e)
     library.value = { movies: [], tv_shows: [] }
@@ -117,7 +129,7 @@ onMounted(async () => {
       }
     }
   })
-
+  await loadContinueWatching()
   refreshLibrary()
 })
 async function loadPosters() {
@@ -190,6 +202,76 @@ function isShowWatched(show: TvShow): boolean {
   return all.length > 0 && all.every((e) => e.watched)
 }
 
+async function resumeVideo(item: ContinueItem) {
+  try {
+    await invoke('play_video', {
+      path: item.path,
+      startPosition: item.position,
+    })
+  } catch (e) {
+    console.error('Resume error:', e)
+    error.value = String(e)
+  }
+}
+
+async function loadContinueWatching() {
+  // Собираем все пути из библиотеки
+  const allPaths: string[] = [
+    ...library.value.movies.map((m) => m.path),
+    ...library.value.tv_shows.flatMap((s) =>
+      s.seasons.flatMap((se) => se.episodes.map((e) => e.path))
+    )
+  ]
+
+  const raw = await invoke<ContinueItem[]>('get_continue_watching', {
+    paths: allPaths
+  })
+
+  // Обогащаем: постер, красивое название, media_type
+  continueWatching.value = raw
+    .map((item) => {
+      // Фильм?
+      const movie = library.value.movies.find((m) => m.path === item.path)
+      if (movie) {
+        return {
+          ...item,
+          title: movie.tmdb?.title || movie.parsed.title,
+          poster_url: movie.tmdb?.poster_local || null,
+          media_type: 'movie' as const
+        }
+      }
+
+      // Эпизод?
+      for (const show of library.value.tv_shows) {
+        for (const season of show.seasons) {
+          const ep = season.episodes.find((e) => e.path === item.path)
+          if (ep) {
+            return {
+              ...item,
+              title: `${show.title} — S${String(season.number).padStart(2, '0')}E${String(ep.number).padStart(2, '0')}`,
+              poster_url: show.tmdb?.poster_local || null,
+              media_type: 'tv_shows' as const
+            }
+          }
+        }
+      }
+
+      return item
+    })
+    .filter((item) => item.poster_url || item.title)
+}
+
+function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return '0:00'
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
 // === Клавиатура ===
 
 onKeyStroke('Backspace', (e) => {
@@ -250,7 +332,35 @@ onKeyStroke('Escape', () => {
       </div>
       <template v-else>
         <p v-if="error" class="error">{{ error }}</p>
-
+        <section v-if="continueWatching.length" class="section">
+          <h2>Продолжить просмотр</h2>
+          <div class="continue-row">
+            <article
+              v-for="item in continueWatching"
+              :key="item.path"
+              class="continue-card"
+              @click="resumeVideo(item)"
+            >
+              <div class="continue-poster-wrap">
+                <img
+                  v-if="item.poster_url"
+                  :src="item.poster_url"
+                  :alt="item.title"
+                  class="poster"
+                  loading="lazy"
+                />
+                <div v-else class="poster placeholder">—</div>
+                <div class="progress-bar">
+                  <div class="progress-fill" :style="{ width: item.progress * 100 + '%' }"></div>
+                </div>
+              </div>
+              <div class="card-title">{{ item.title }}</div>
+              <div class="card-year">
+                {{ formatTime(item.position) }} / {{ formatTime(item.duration) }}
+              </div>
+            </article>
+          </div>
+        </section>
         <!-- Фильмы -->
         <section v-if="library.movies.length" class="section">
           <h2>Фильмы</h2>
@@ -782,5 +892,65 @@ body {
 
 .episode.watched .ep-number {
   color: #4a9eff;
+}
+/* Продолжить просмотр — горизонтальная прокрутка */
+.continue-row {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  scroll-behavior: smooth;
+}
+
+.continue-row::-webkit-scrollbar {
+  height: 6px;
+}
+
+.continue-row::-webkit-scrollbar-track {
+  background: #1e2127;
+  border-radius: 3px;
+}
+
+.continue-row::-webkit-scrollbar-thumb {
+  background: #3a3f47;
+  border-radius: 3px;
+}
+
+.continue-row::-webkit-scrollbar-thumb:hover {
+  background: #4a5058;
+}
+
+.continue-card {
+  flex: 0 0 160px;      /* фиксированная ширина карточки */
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.continue-card:hover {
+  transform: translateY(-4px);
+}
+
+.continue-poster-wrap {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1e2127;
+}
+
+/* Прогресс-бар внизу постера */
+.progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.progress-fill {
+  height: 100%;
+  background: #4a9eff;
+  transition: width 0.3s ease;
 }
 </style>
