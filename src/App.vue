@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { onKeyStroke } from '@vueuse/core'
 import Settings from './views/Settings.vue'
@@ -196,10 +196,6 @@ function openShow(show: TvShow) {
 
 function closeShow() {
   selectedShow.value = null
-}
-
-function totalEpisodes(show: TvShow): number {
-  return show.seasons.reduce((sum, s) => sum + s.episodes.length, 0)
 }
 
 function isShowWatched(show: TvShow): boolean {

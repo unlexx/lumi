@@ -16,10 +16,8 @@ pub struct CachedShow {
 #[derive(Debug, Clone)]
 pub struct WatchStatus {
     pub file_path: String,
-    pub watched: bool,
     pub position: f64,
     pub duration: f64,
-    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -205,18 +203,6 @@ pub fn save_tv_show(conn: &Connection, show: &crate::tmdb::TmdbShow) -> SqlResul
     Ok(())
 }
 
-pub fn is_watched(conn: &Connection, file_path: &str) -> bool {
-    conn.query_row(
-        "SELECT watched FROM watch_status WHERE file_path = ?1",
-        rusqlite::params![file_path],
-        |row| row.get::<_, i64>(0),
-    )
-    .optional()
-    .unwrap_or(None)
-    .map(|w| w != 0)
-    .unwrap_or(false)
-}
-
 pub fn mark_watched(
     conn: &Connection,
     file_path: &str,
@@ -261,10 +247,8 @@ pub fn get_in_progress(conn: &Connection) -> Vec<WatchStatus> {
     let rows = stmt.query_map([], |row| {
         Ok(WatchStatus {
             file_path: row.get(0)?,
-            watched: row.get::<_, i64>(1)? != 0,
             position: row.get(2)?,
             duration: row.get(3)?,
-            updated_at: row.get(4)?,
         })
     });
 
@@ -293,11 +277,7 @@ pub fn get_watch_info(conn: &Connection, file_path: &str) -> WatchInfo {
     .unwrap_or_default()
 }
 
-pub fn set_watched_bulk(
-    conn: &Connection,
-    paths: &[String],
-    watched: bool,
-) -> SqlResult<()> {
+pub fn set_watched_bulk(conn: &Connection, paths: &[String], watched: bool) -> SqlResult<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
