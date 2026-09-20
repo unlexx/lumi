@@ -119,7 +119,7 @@ pub fn find_cached(conn: &Connection, title: &str) -> Option<CachedMovie> {
     conn.query_row(
         "SELECT tmdb_id, title, original_title, overview, poster_path, rating, release_date
          FROM movies
-         WHERE LOWER(title) = LOWER(?1)
+         WHERE LOWER(original_title) = LOWER(?1) OR LOWER(title) = LOWER(?1)
          LIMIT 1",
         rusqlite::params![title],
         |row| {
@@ -165,9 +165,9 @@ pub fn save_movie(conn: &Connection, movie: &TmdbMovie) -> SqlResult<()> {
 
 pub fn find_cached_tv(conn: &Connection, name: &str) -> Option<CachedShow> {
     conn.query_row(
-        "SELECT tmdb_id, name, overview, poster_path, rating, first_air_date
+        "SELECT tmdb_id, name, original_name, overview, poster_path, rating, first_air_date
          FROM tv_shows
-         WHERE LOWER(name) = LOWER(?1)
+         WHERE LOWER(original_name) = LOWER(?1) OR LOWER(name) = LOWER(?1)
          LIMIT 1",
         rusqlite::params![name],
         |row| {
@@ -175,10 +175,10 @@ pub fn find_cached_tv(conn: &Connection, name: &str) -> Option<CachedShow> {
                 tmdb_id: row.get(0)?,
                 name: row.get(1)?,
                 original_name: row.get(2)?,
-                overview: row.get(2)?,
-                poster_path: row.get(3)?,
-                rating: row.get(4)?,
-                first_air_date: row.get(5)?,
+                overview: row.get(3)?,
+                poster_path: row.get(4)?,
+                rating: row.get(5)?,
+                first_air_date: row.get(6)?,
             })
         },
     )
@@ -314,7 +314,6 @@ pub fn set_watched_bulk(conn: &Connection, paths: &[String], watched: bool) -> S
     tx.commit()?;
     Ok(())
 }
-
 
 pub fn save_manual_match(result: &MatchResult, media_type: &str) -> Result<(), String> {
     let conn = init_db().map_err(|e| e.to_string())?;

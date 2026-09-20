@@ -430,3 +430,28 @@ pub async fn apply_tmdb_match(tmdb_id: u32, media_type: String) -> Result<MatchR
 
     Ok(result)
 }
+
+#[tauri::command]
+pub async fn fetch_poster_preview(url: String) -> Result<String, String> {
+    let client = build_client().map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP status: {}", response.status()));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Read error: {}", e))?;
+
+    use base64::{engine::general_purpose, Engine as _};
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+
+    Ok(format!("data:image/jpeg;base64,{}", encoded))
+}

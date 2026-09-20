@@ -34,6 +34,7 @@ pub fn run() {
             scanner::set_watched_bulk,
             tmdb::search_tmdb_manual,
             tmdb::apply_tmdb_match,
+            tmdb::fetch_poster_preview,
             toggle_fullscreen,
         ])
         .run(tauri::generate_context!())
