@@ -33,6 +33,7 @@ interface VideoFile {
   parsed: ParsedVideo
   tmdb: TmdbInfo | null
   media_type: 'movie' | 'tv_shows'
+  watched: boolean // ← новое
 }
 
 interface Episode {
@@ -94,6 +95,15 @@ onMounted(async () => {
       folder: string
     }
   })
+
+  await listen('watch_status_updated', (event) => {
+    const { path, watched } = event.payload as { path: string; watched: boolean }
+    const movie = library.value.movies.find((m) => m.path === path)
+    if (movie) movie.watched = watched
+  })
+
+  // Запускаем первое сканирование
+  refreshLibrary()
   refreshLibrary()
 })
 async function loadPosters() {
@@ -244,6 +254,7 @@ onKeyStroke('Escape', () => {
                 <div v-if="movie.tmdb?.rating" class="rating">
                   ★ {{ movie.tmdb.rating.toFixed(1) }}
                 </div>
+                <div v-if="movie.watched" class="watched-badge">✓</div>
               </div>
               <div class="card-title">
                 {{ movie.tmdb?.title || movie.parsed.title }}
@@ -720,5 +731,20 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.watched-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(74, 158, 255, 0.9);
+  color: #fff;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: bold;
 }
 </style>

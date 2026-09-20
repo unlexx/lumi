@@ -5,6 +5,7 @@ mod cache;
 mod player;
 mod config;
 mod tv_parser;
+mod mpv;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
