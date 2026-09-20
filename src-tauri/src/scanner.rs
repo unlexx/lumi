@@ -14,6 +14,8 @@ pub struct VideoFile {
     pub tmdb: Option<TmdbInfo>,
     pub media_type: MediaType,
     pub watched: bool,
+    pub position: Option<f64>,
+    pub duration: Option<f64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -48,6 +50,8 @@ pub struct Episode {
     pub name: String, // полное имя файла
     pub parsed: ParsedVideo,
     pub watched: bool,
+    pub position: Option<f64>,
+    pub duration: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -82,7 +86,6 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     let total_folders = folders.len();
     let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set in .env")?;
     let client = crate::tmdb::build_client().map_err(|e| e.to_string())?;
-
     let video_extensions = ["mkv", "mp4", "avi", "mov", "wmv", "flv", "webm"];
     let mut videos = Vec::new();
 
@@ -130,17 +133,22 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
 
                 let parsed = parse_filename(&name);
 
+                let path_str = file_path.to_string_lossy().to_string();
+                let watch_info = conn
+                    .as_ref()
+                    .map(|c| crate::cache::get_watch_info(c, &path_str))
+                    .unwrap_or_default();
+
                 videos.push(VideoFile {
-                    path: file_path.to_string_lossy().to_string(),
+                    path: path_str,
                     name,
                     extension: ext_str,
                     parsed,
                     tmdb: None,
                     media_type: folder.media_type.clone(),
-                    watched: conn
-                        .as_ref()
-                        .map(|c| crate::cache::is_watched(c, &file_path.to_string_lossy()))
-                        .unwrap_or(false),
+                    watched: watch_info.watched,
+                    position: watch_info.position,
+                    duration: watch_info.duration,
                 });
             }
         }
@@ -246,17 +254,20 @@ pub fn group_into_tv_shows(videos: Vec<VideoFile>) -> Vec<TvShow> {
             let parsed_tv = parse_tv_filename(&file.name);
             let season_num = parsed_tv.season.unwrap();
             let episode_num = parsed_tv.episode.unwrap();
-            let watched = conn
+
+            let watch_info = conn
                 .as_ref()
-                .map(|c| crate::cache::is_watched(c, &file.path))
-                .unwrap_or(false);
+                .map(|c| crate::cache::get_watch_info(c, &file.path))
+                .unwrap_or_default();
 
             seasons_map.entry(season_num).or_default().push(Episode {
                 number: episode_num,
                 path: file.path.clone(),
                 name: file.name.clone(),
                 parsed: file.parsed.clone(),
-                watched,
+                watched: watch_info.watched,
+                position: watch_info.position,
+                duration: watch_info.duration,
             });
         }
 
@@ -289,8 +300,7 @@ pub fn get_continue_watching(paths: Vec<String>) -> Vec<ContinueItem> {
     };
 
     let in_progress = crate::cache::get_in_progress(&conn);
-    let path_set: std::collections::HashSet<&str> =
-        paths.iter().map(|s| s.as_str()).collect();
+    let path_set: std::collections::HashSet<&str> = paths.iter().map(|s| s.as_str()).collect();
 
     in_progress
         .into_iter()
@@ -298,11 +308,11 @@ pub fn get_continue_watching(paths: Vec<String>) -> Vec<ContinueItem> {
         .map(|w| ContinueItem {
             title: extract_title_from_path(&w.file_path),
             path: w.file_path,
-            poster_url: None,   // заполним на фронтенде
+            poster_url: None, // заполним на фронтенде
             position: w.position,
             duration: w.duration,
             progress: w.position / w.duration,
-            media_type: MediaType::Movie,   // заполним на фронтенде
+            media_type: MediaType::Movie, // заполним на фронтенде
         })
         .collect()
 }

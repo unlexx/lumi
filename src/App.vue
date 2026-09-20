@@ -34,6 +34,8 @@ interface VideoFile {
   tmdb: TmdbInfo | null
   media_type: 'movie' | 'tv_shows'
   watched: boolean
+  position: number | null
+  duration: number | null
 }
 
 interface Episode {
@@ -42,6 +44,8 @@ interface Episode {
   name: string
   parsed: ParsedVideo
   watched: boolean
+  position: number | null
+  duration: number | null
 }
 
 interface Season {
@@ -206,7 +210,7 @@ async function resumeVideo(item: ContinueItem) {
   try {
     await invoke('play_video', {
       path: item.path,
-      startPosition: item.position,
+      startPosition: item.position
     })
   } catch (e) {
     console.error('Resume error:', e)
@@ -270,6 +274,30 @@ function formatTime(seconds: number): string {
     return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
   }
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function progressPercent(item: {
+  position: number | null
+  duration: number | null
+}): number | null {
+  if (!item.position || !item.duration || item.duration <= 0) return null
+  const p = item.position / item.duration
+  if (p <= 0.01) return null // едва начали — не показываем
+  if (p >= 0.95) return null // досмотрели — тоже не показываем
+  return p
+}
+
+function episodesWatched(show: TvShow): number {
+  return show.seasons.flatMap((s) => s.episodes).filter((e) => e.watched).length
+}
+
+function episodesTotal(show: TvShow): number {
+  return show.seasons.flatMap((s) => s.episodes).length
+}
+
+function allEpisodesWatched(show: TvShow): boolean {
+  const total = episodesTotal(show)
+  return total > 0 && episodesWatched(show) === total
 }
 
 // === Клавиатура ===
@@ -384,6 +412,12 @@ onKeyStroke('Escape', () => {
                   ★ {{ movie.tmdb.rating.toFixed(1) }}
                 </div>
                 <div v-if="movie.watched" class="watched-badge">✓</div>
+                <div v-if="progressPercent(movie) !== null" class="progress-bar">
+                  <div
+                    class="progress-fill"
+                    :style="{ width: progressPercent(movie)! * 100 + '%' }"
+                  ></div>
+                </div>
               </div>
               <div class="card-title">
                 {{ movie.tmdb?.title || movie.parsed.title }}
@@ -418,7 +452,16 @@ onKeyStroke('Escape', () => {
                 <div v-if="isShowWatched(show)" class="watched-badge">✓</div>
               </div>
               <div class="card-title">{{ show.title }}</div>
-              <div class="card-year">{{ show.year || '' }} · {{ totalEpisodes(show) }} сер.</div>
+              <div class="card-year">
+                <template v-if="show.year">{{ show.year }} · </template>
+                <template v-if="allEpisodesWatched(show)">
+                  <span class="all-watched">✓ Все просмотрено</span>
+                </template>
+                <template v-else>
+                  Осталось {{ episodesTotal(show) - episodesWatched(show) }} из
+                  {{ episodesTotal(show) }}
+                </template>
+              </div>
             </article>
           </div>
         </section>
@@ -921,7 +964,7 @@ body {
 }
 
 .continue-card {
-  flex: 0 0 160px;      /* фиксированная ширина карточки */
+  flex: 0 0 160px; /* фиксированная ширина карточки */
   cursor: pointer;
   transition: transform 0.15s ease;
 }
@@ -952,5 +995,10 @@ body {
   height: 100%;
   background: #4a9eff;
   transition: width 0.3s ease;
+}
+
+.all-watched {
+  color: #4a9eff;
+  font-weight: 500;
 }
 </style>
