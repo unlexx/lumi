@@ -9,6 +9,8 @@ pub fn launch(file_path: &str, start_position: Option<f64>) -> Result<Child, Str
     let mut cmd = Command::new("mpv");
     cmd.arg(format!("--input-ipc-server=\\\\.\\pipe\\{}", SOCKET_NAME));
     cmd.arg("--fullscreen");
+    cmd.arg("--keep-open=no");
+    cmd.arg("--idle=no");
 
     if let Some(pos) = start_position {
         cmd.arg(format!("--start={}", pos));

@@ -1496,7 +1496,7 @@ body {
   font-size: 0.8rem;
   margin-top: 0.35rem;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

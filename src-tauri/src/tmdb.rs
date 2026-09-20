@@ -51,12 +51,12 @@ pub async fn get_poster(tmdb_id: u32, poster_path: String) -> Result<String, Str
 
     // Если уже скачан — возвращаем путь
     if file_path.exists() {
-        println!("  → Poster cache HIT: {}", tmdb_id);
+        crate::log_info!("  → Poster cache HIT: {}", tmdb_id);
         return Ok(file_path.to_string_lossy().to_string());
     }
 
     // Иначе качаем
-    println!("  → Poster cache MISS: {}, downloading...", tmdb_id);
+    crate::log_info!("  → Poster cache MISS: {}, downloading...", tmdb_id);
     let url = format!("https://image.tmdb.org/t/p/w500{}", poster_path);
 
     let client = build_client().map_err(|e| e.to_string())?;
@@ -208,7 +208,7 @@ pub async fn get_or_fetch(
     {
         let conn = cache::init_db().map_err(|e| e.to_string())?;
         if let Some(cached) = cache::find_cached(&conn, title) {
-            println!("  → Cache HIT: {}", cached.title);
+            crate::log_info!("  → Cache HIT: {}", cached.title);
             return Ok(Some(TmdbMovie {
                 id: cached.tmdb_id,
                 title: cached.title,
@@ -222,9 +222,10 @@ pub async fn get_or_fetch(
     }
 
     // 2. Идём в TMDB
-    println!(
+    crate::log_info!(
         "  → Cache MISS, fetching from TMDB: '{}' ({:?})",
-        title, year
+        title,
+        year
     );
     let result = search_movie(client, api_key, title, year).await?;
 
@@ -234,7 +235,7 @@ pub async fn get_or_fetch(
             let _ = cache::save_movie(&conn, movie);
         }
     } else {
-        println!("  → No results for '{}'", title);
+        crate::log_info!("  → No results for '{}'", title);
     }
 
     Ok(result)
@@ -250,7 +251,7 @@ pub async fn get_or_fetch_tv(
     {
         let conn = cache::init_db().map_err(|e| e.to_string())?;
         if let Some(cached) = cache::find_cached_tv(&conn, title) {
-            println!("  → TV Cache HIT: {}", cached.name);
+            crate::log_info!("  → TV Cache HIT: {}", cached.name);
             return Ok(Some(TmdbShow {
                 id: cached.tmdb_id,
                 name: cached.name,
@@ -264,9 +265,10 @@ pub async fn get_or_fetch_tv(
     }
 
     // 2. Идём в TMDB
-    println!(
+    crate::log_info!(
         "  → TV Cache MISS, fetching from TMDB: '{}' ({:?})",
-        title, year
+        title,
+        year
     );
     let result = search_tv(client, api_key, title, year).await?;
 
@@ -276,7 +278,7 @@ pub async fn get_or_fetch_tv(
             let _ = cache::save_tv_show(&conn, show);
         }
     } else {
-        println!("  → No TV results for '{}'", title);
+        crate::log_info!("  → No TV results for '{}'", title);
     }
 
     Ok(result)

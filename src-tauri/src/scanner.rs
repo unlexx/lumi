@@ -74,7 +74,7 @@ pub struct ContinueItem {
 
 #[tauri::command]
 pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
-    println!("=== scan_all started ===");
+    crate::log_info!("=== scan_all started ===");
 
     let folders = load_folders();
     if folders.is_empty() {
@@ -93,7 +93,7 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     for (idx, folder) in folders.iter().enumerate() {
         let path = Path::new(&folder.path);
         if !path.exists() || !path.is_dir() {
-            eprintln!("Skipping invalid folder: {}", folder.path);
+            crate::log_info!("Skipping invalid folder: {}", folder.path);
             continue;
         }
 
@@ -108,7 +108,7 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
         )
         .ok();
 
-        println!("Scanning: {} ({:?})", folder.path, folder.media_type);
+        crate::log_info!("Scanning: {} ({:?})", folder.path, folder.media_type);
         let conn = crate::cache::init_db().ok();
         for entry in WalkDir::new(&folder.path)
             .follow_links(false)
@@ -156,7 +156,7 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     }
 
     // TMDB lookup
-    println!("=== TMDB lookup for {} videos ===", videos.len());
+    crate::log_info!("=== TMDB lookup for {} videos ===", videos.len());
     for video in &mut videos {
         if video.media_type != MediaType::Movie {
             continue;
@@ -178,10 +178,10 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
                 });
             }
             Ok(None) => {
-                println!("  → No results for '{}'", video.parsed.title);
+                crate::log_info!("  → No results for '{}'", video.parsed.title);
             }
             Err(e) => {
-                eprintln!("TMDB error for '{}': {}", video.parsed.title, e);
+                crate::log_info!("TMDB error for '{}': {}", video.parsed.title, e);
             }
         }
     }
@@ -193,7 +193,7 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     let mut tv_shows = group_into_tv_shows(tv_files);
 
     // TMDB lookup для сериалов — один запрос на сериал
-    println!("=== TMDB lookup for {} TV shows ===", tv_shows.len());
+    crate::log_info!("=== TMDB lookup for {} TV shows ===", tv_shows.len());
     for show in &mut tv_shows {
         match crate::tmdb::get_or_fetch_tv(&client, &api_key, &show.title, show.year).await {
             Ok(Some(tv)) => {
@@ -214,10 +214,10 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
                 });
             }
             Ok(None) => {
-                println!("  → No results for '{}'", show.title);
+                crate::log_info!("  → No results for '{}'", show.title);
             }
             Err(e) => {
-                eprintln!("TMDB error for '{}': {}", show.title, e);
+                crate::log_info!("TMDB error for '{}': {}", show.title, e);
             }
         }
     }

@@ -12,7 +12,7 @@ pub async fn play_video(
     let file_path = path.clone();
     std::thread::spawn(move || {
         if let Err(e) = play_and_track(&file_path, start_position, app) {
-            eprintln!("Playback error: {}", e);
+            crate::log_info!("Playback error: {}", e);
         }
     });
     Ok(())
@@ -50,29 +50,31 @@ fn play_and_track(
                 std::thread::sleep(Duration::from_secs(2));
             }
             Err(e) => {
-                eprintln!("Error waiting for mpv: {}", e);
+                crate::log_info!("Error waiting for mpv: {}", e);
                 break;
             }
         }
     }
 
-    println!(
+    crate::log_info!(
         "Playback finished: {} — position {:.1}s / duration {:.1}s",
-        file_path, last_position, last_duration
+        file_path,
+        last_position,
+        last_duration
     );
 
     // Сохраняем в базу
     if let Ok(conn) = cache::init_db() {
         if let Err(e) = cache::mark_watched(&conn, file_path, last_position, last_duration) {
-            eprintln!("Failed to save watch status: {}", e);
+            crate::log_info!("Failed to save watch status: {}", e);
         } else {
             if let Ok(conn) = cache::init_db() {
                 if let Err(e) = cache::mark_watched(&conn, file_path, last_position, last_duration)
                 {
-                    eprintln!("Failed to save watch status: {}", e);
+                    crate::log_info!("Failed to save watch status: {}", e);
                 } else {
                     let watched = last_duration > 0.0 && last_position / last_duration >= 0.95;
-                    println!(
+                    crate::log_info!(
                         "  → Marked as {} ({:.1}%)",
                         if watched { "WATCHED" } else { "in progress" },
                         if last_duration > 0.0 {
