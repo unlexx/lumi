@@ -3,6 +3,7 @@ use crate::parser::{parse_filename, ParsedVideo};
 use serde::Serialize;
 use std::path::Path;
 use walkdir::WalkDir;
+use tauri::Emitter;
 
 #[derive(Serialize, Clone)]
 pub struct VideoFile {
@@ -54,7 +55,7 @@ pub struct Library {
 }
 
 #[tauri::command]
-pub async fn scan_all() -> Result<Library, String> {
+pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     println!("=== scan_all started ===");
 
     let folders = load_folders();
@@ -65,6 +66,7 @@ pub async fn scan_all() -> Result<Library, String> {
         });
     }
 
+    let total_folders = folders.len();
     let api_key = std::env::var("TMDB_API_KEY")
         .map_err(|_| "TMDB_API_KEY not set in .env")?;
     let client = crate::tmdb::build_client().map_err(|e| e.to_string())?;
@@ -72,12 +74,23 @@ pub async fn scan_all() -> Result<Library, String> {
     let video_extensions = ["mkv", "mp4", "avi", "mov", "wmv", "flv", "webm"];
     let mut videos = Vec::new();
 
-    for folder in &folders {
+    for (idx, folder) in folders.iter().enumerate() {
         let path = Path::new(&folder.path);
         if !path.exists() || !path.is_dir() {
             eprintln!("Skipping invalid folder: {}", folder.path);
             continue;
         }
+
+        // Эмитим прогресс перед обработкой папки
+        app.emit(
+            "scan_progress",
+            serde_json::json!({
+                "current": idx + 1,
+                "total": total_folders,
+                "folder": folder.path,
+            }),
+        )
+        .ok();
 
         println!("Scanning: {} ({:?})", folder.path, folder.media_type);
 
@@ -153,11 +166,11 @@ pub async fn scan_all() -> Result<Library, String> {
         }
     }
 
-let (movies, tv_files): (Vec<VideoFile>, Vec<VideoFile>) = videos
-    .into_iter()
-    .partition(|v| v.media_type == MediaType::Movie);
+    let (movies, tv_files): (Vec<VideoFile>, Vec<VideoFile>) = videos
+        .into_iter()
+        .partition(|v| v.media_type == MediaType::Movie);
 
-let mut tv_shows = group_into_tv_shows(tv_files);
+    let mut tv_shows = group_into_tv_shows(tv_files);
 
 // TMDB lookup для сериалов — один запрос на сериал
 println!("=== TMDB lookup for {} TV shows ===", tv_shows.len());

@@ -3,9 +3,10 @@ import { ref, onMounted } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { onKeyStroke } from '@vueuse/core'
 import Settings from './views/Settings.vue'
+import { listen } from '@tauri-apps/api/event'
 
 const currentView = ref<'library' | 'settings'>('library')
-
+const scanProgress = ref<{ current: number; total: number; folder: string } | null>(null)
 // === Интерфейсы ===
 
 interface ParsedVideo {
@@ -71,6 +72,7 @@ const selectedShow = ref<TvShow | null>(null)
 async function refreshLibrary() {
   loading.value = true
   error.value = null
+  scanProgress.value = null
   try {
     library.value = await invoke<Library>('scan_all')
     loadPosters()
@@ -79,11 +81,21 @@ async function refreshLibrary() {
     library.value = { movies: [], tv_shows: [] }
   } finally {
     loading.value = false
+    scanProgress.value = null
   }
 }
 
 onMounted(refreshLibrary)
-
+onMounted(async () => {
+  await listen('scan_progress', (event) => {
+    scanProgress.value = event.payload as {
+      current: number
+      total: number
+      folder: string
+    }
+  })
+  refreshLibrary()
+})
 async function loadPosters() {
   for (const movie of library.value.movies) {
     if (!movie.tmdb?.poster_url) continue
@@ -185,76 +197,95 @@ onKeyStroke('Escape', () => {
         <button :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">
           Настройки
         </button>
+        <button
+          v-if="currentView === 'library'"
+          :disabled="loading"
+          @click="refreshLibrary"
+          title="Обновить библиотеку"
+        >
+          ↻
+        </button>
       </nav>
     </header>
 
     <Settings v-if="currentView === 'settings'" />
 
     <div v-else>
-      <p v-if="loading" class="status">Сканирование...</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      <div v-if="loading" class="loading">
+        <div class="spinner"></div>
+        <p v-if="scanProgress" class="progress-text">
+          Сканирование папки {{ scanProgress.current }} из {{ scanProgress.total }}
+        </p>
+        <p v-else class="progress-text">Подготовка...</p>
+        <p v-if="scanProgress" class="progress-folder">{{ scanProgress.folder }}</p>
+      </div>
+      <template v-else>
+        <p v-if="error" class="error">{{ error }}</p>
 
-      <!-- Фильмы -->
-      <section v-if="library.movies.length" class="section">
-        <h2>Фильмы</h2>
-        <div class="grid">
-          <article
-            v-for="movie in library.movies"
-            :key="movie.path"
-            class="card"
-            @click="openMovie(movie)"
-          >
-            <div class="poster-wrap">
-              <img
-                v-if="movie.tmdb?.poster_local"
-                :src="movie.tmdb.poster_local"
-                :alt="movie.tmdb.title"
-                class="poster"
-                loading="lazy"
-              />
-              <div v-else class="poster placeholder">Нет постера</div>
-              <div v-if="movie.tmdb?.rating" class="rating">
-                ★ {{ movie.tmdb.rating.toFixed(1) }}
+        <!-- Фильмы -->
+        <section v-if="library.movies.length" class="section">
+          <h2>Фильмы</h2>
+          <div class="grid">
+            <article
+              v-for="movie in library.movies"
+              :key="movie.path"
+              class="card"
+              @click="openMovie(movie)"
+            >
+              <div class="poster-wrap">
+                <img
+                  v-if="movie.tmdb?.poster_local"
+                  :src="movie.tmdb.poster_local"
+                  :alt="movie.tmdb.title"
+                  class="poster"
+                  loading="lazy"
+                />
+                <div v-else class="poster placeholder">Нет постера</div>
+                <div v-if="movie.tmdb?.rating" class="rating">
+                  ★ {{ movie.tmdb.rating.toFixed(1) }}
+                </div>
               </div>
-            </div>
-            <div class="card-title">
-              {{ movie.tmdb?.title || movie.parsed.title }}
-            </div>
-            <div class="card-year">{{ movie.parsed.year || '' }}</div>
-          </article>
-        </div>
-      </section>
+              <div class="card-title">
+                {{ movie.tmdb?.title || movie.parsed.title }}
+              </div>
+              <div class="card-year">{{ movie.parsed.year || '' }}</div>
+            </article>
+          </div>
+        </section>
 
-      <!-- Сериалы -->
-      <section v-if="library.tv_shows.length" class="section">
-        <h2>Сериалы</h2>
-        <div class="grid">
-          <article
-            v-for="show in library.tv_shows"
-            :key="show.title"
-            class="card"
-            @click="openShow(show)"
-          >
-            <div class="poster-wrap">
-              <img
-                v-if="show.tmdb?.poster_local"
-                :src="show.tmdb.poster_local"
-                :alt="show.title"
-                class="poster"
-                loading="lazy"
-              />
-              <div v-else class="poster placeholder">Сериал</div>
-              <div v-if="show.tmdb?.rating" class="rating">★ {{ show.tmdb.rating.toFixed(1) }}</div>
-            </div>
-            <div class="card-title">{{ show.title }}</div>
-            <div class="card-year">{{ show.year || '' }} · {{ totalEpisodes(show) }} сер.</div>
-          </article>
-        </div>
-      </section>
+        <!-- Сериалы -->
+        <section v-if="library.tv_shows.length" class="section">
+          <h2>Сериалы</h2>
+          <div class="grid">
+            <article
+              v-for="show in library.tv_shows"
+              :key="show.title"
+              class="card"
+              @click="openShow(show)"
+            >
+              <div class="poster-wrap">
+                <img
+                  v-if="show.tmdb?.poster_local"
+                  :src="show.tmdb.poster_local"
+                  :alt="show.title"
+                  class="poster"
+                  loading="lazy"
+                />
+                <div v-else class="poster placeholder">Сериал</div>
+                <div v-if="show.tmdb?.rating" class="rating">
+                  ★ {{ show.tmdb.rating.toFixed(1) }}
+                </div>
+              </div>
+              <div class="card-title">{{ show.title }}</div>
+              <div class="card-year">{{ show.year || '' }} · {{ totalEpisodes(show) }} сер.</div>
+            </article>
+          </div>
+        </section>
 
-      <p v-if="!loading && !library.movies.length && !library.tv_shows.length" class="status">
-        Библиотека пуста. Добавьте папки в настройках.
-      </p>
+        <p v-if="!error && !library.movies.length && !library.tv_shows.length" class="status">
+          Библиотека пуста. Добавьте папки в настройках.
+        </p>
+      </template>
     </div>
 
     <!-- Модалка фильма -->
@@ -649,5 +680,45 @@ body {
 
 .ep-play:hover {
   background: #353a42;
+}
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 0;
+  gap: 1rem;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #2a2e35;
+  border-top-color: #4a9eff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-text {
+  margin: 0;
+  color: #ccc;
+  font-size: 0.95rem;
+}
+
+.progress-folder {
+  margin: 0;
+  color: #666;
+  font-size: 0.8rem;
+  font-family: monospace;
+  max-width: 500px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
