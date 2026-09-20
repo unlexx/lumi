@@ -83,6 +83,7 @@ const error = ref<string | null>(null)
 const selectedVideo = ref<VideoFile | null>(null)
 const selectedShow = ref<TvShow | null>(null)
 const continueWatching = ref<ContinueItem[]>([])
+const openMenuPath = ref<string | null>(null)
 
 // === Загрузка ===
 
@@ -197,10 +198,6 @@ function closeShow() {
   selectedShow.value = null
 }
 
-function totalEpisodes(show: TvShow): number {
-  return show.seasons.reduce((sum, s) => sum + s.episodes.length, 0)
-}
-
 function isShowWatched(show: TvShow): boolean {
   const all = show.seasons.flatMap((s) => s.episodes)
   return all.length > 0 && all.every((e) => e.watched)
@@ -300,6 +297,90 @@ function allEpisodesWatched(show: TvShow): boolean {
   return total > 0 && episodesWatched(show) === total
 }
 
+function toggleMenu(path: string) {
+  openMenuPath.value = openMenuPath.value === path ? null : path
+}
+
+// === Меню фильма ===
+
+async function playMovieFromStart(movie: VideoFile) {
+  await invoke('play_video', { path: movie.path, startPosition: null })
+  openMenuPath.value = null
+}
+
+async function resumeMovie(movie: VideoFile) {
+  if (movie.position == null) return
+  await invoke('play_video', { path: movie.path, startPosition: movie.position })
+  openMenuPath.value = null
+}
+
+async function markMovieWatched(movie: VideoFile, watched: boolean) {
+  await invoke('set_watched_bulk', { paths: [movie.path], watched })
+  movie.watched = watched
+  if (!watched) {
+    movie.position = 0
+    movie.duration = 0
+  }
+  openMenuPath.value = null
+  await loadContinueWatching()
+}
+
+// === Меню сериала ===
+
+function firstEpisode(show: TvShow): Episode | null {
+  for (const season of show.seasons) {
+    if (season.episodes.length > 0) return season.episodes[0]
+  }
+  return null
+}
+
+function firstUnwatchedEpisode(show: TvShow): Episode | null {
+  for (const season of show.seasons) {
+    for (const ep of season.episodes) {
+      if (!ep.watched) return ep
+    }
+  }
+  return null
+}
+
+function episodeLabel(show: TvShow, ep: Episode): string {
+  const season = show.seasons.find((s) => s.episodes.includes(ep))
+  if (!season) return ''
+  return `S${String(season.number).padStart(2, '0')}E${String(ep.number).padStart(2, '0')}`
+}
+
+async function playShowFromStart(show: TvShow) {
+  const ep = firstEpisode(show)
+  if (!ep) return
+  await invoke('play_video', { path: ep.path, startPosition: null })
+  openMenuPath.value = null
+}
+
+async function resumeShow(show: TvShow) {
+  const ep = firstUnwatchedEpisode(show)
+  if (!ep) return
+  const startPosition = ep.position && ep.position > 0 ? ep.position : null
+  await invoke('play_video', { path: ep.path, startPosition })
+  openMenuPath.value = null
+}
+
+async function markShowWatched(show: TvShow, watched: boolean) {
+  const paths = show.seasons.flatMap((s) => s.episodes.map((e) => e.path))
+  if (paths.length === 0) return
+  await invoke('set_watched_bulk', { paths, watched })
+  for (const season of show.seasons) {
+    for (const ep of season.episodes) {
+      ep.watched = watched
+      if (!watched) {
+        ep.position = 0
+        ep.duration = 0
+      }
+    }
+  }
+  openMenuPath.value = null
+  await loadContinueWatching()
+}
+
 // === Клавиатура ===
 
 onKeyStroke('Backspace', (e) => {
@@ -316,7 +397,7 @@ onKeyStroke('Escape', () => {
 </script>
 
 <template>
-  <main class="app">
+  <main class="app" @click="openMenuPath = null">
     <header class="toolbar">
       <div class="header-left">
         <button
@@ -418,6 +499,20 @@ onKeyStroke('Escape', () => {
                     :style="{ width: progressPercent(movie)! * 100 + '%' }"
                   ></div>
                 </div>
+                <button class="menu-btn" @click.stop="toggleMenu(movie.path)">⋮</button>
+                <div v-if="openMenuPath === movie.path" class="context-menu" @click.stop>
+                  <button @click="playMovieFromStart(movie)">Смотреть с начала</button>
+                  <button
+                    v-if="movie.position && movie.position > 0 && !movie.watched"
+                    @click="resumeMovie(movie)"
+                  >
+                    Продолжить с {{ formatTime(movie.position) }}
+                  </button>
+                  <button v-if="!movie.watched" @click="markMovieWatched(movie, true)">
+                    Пометить просмотренным
+                  </button>
+                  <button v-else @click="markMovieWatched(movie, false)">Непросмотренно</button>
+                </div>
               </div>
               <div class="card-title">
                 {{ movie.tmdb?.title || movie.parsed.title }}
@@ -451,6 +546,17 @@ onKeyStroke('Escape', () => {
                 </div>
                 <div v-if="isShowWatched(show)" class="watched-badge">✓</div>
               </div>
+              <button class="menu-btn" @click.stop="toggleMenu(show.title)">⋮</button>
+              <div v-if="openMenuPath === show.title" class="context-menu" @click.stop>
+                <button @click="playShowFromStart(show)">Смотреть с начала</button>
+                <button v-if="firstUnwatchedEpisode(show)" @click="resumeShow(show)">
+                  Продолжить с {{ episodeLabel(show, firstUnwatchedEpisode(show)!) }}
+                </button>
+                <button v-if="!allEpisodesWatched(show)" @click="markShowWatched(show, true)">
+                  Пометить просмотренным
+                </button>
+                <button v-else @click="markShowWatched(show, false)">Непросмотренно</button>
+              </div>
               <div class="card-title">{{ show.title }}</div>
               <div class="card-year">
                 <template v-if="show.year">{{ show.year }} · </template>
@@ -458,8 +564,11 @@ onKeyStroke('Escape', () => {
                   <span class="all-watched">✓ Все просмотрено</span>
                 </template>
                 <template v-else>
-                  Осталось {{ episodesTotal(show) - episodesWatched(show) }} из
-                  {{ episodesTotal(show) }}
+                  <span v-if="episodesWatched(show) === 0"> {{ episodesTotal(show) }} сер. </span>
+                  <span v-else>
+                    Осталось {{ episodesTotal(show) - episodesWatched(show) }} из
+                    {{ episodesTotal(show) }}
+                  </span>
                 </template>
               </div>
             </article>
@@ -608,7 +717,7 @@ body {
   position: relative;
   aspect-ratio: 2 / 3;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   background: #1e2127;
 }
 
@@ -617,6 +726,7 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: 8px;
 }
 
 .poster.placeholder {
@@ -1000,5 +1110,73 @@ body {
 .all-watched {
   color: #4a9eff;
   font-weight: 500;
+}
+.menu-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
+  z-index: 5;
+}
+
+.card:hover .menu-btn,
+.continue-card:hover .menu-btn {
+  opacity: 1;
+}
+
+.menu-btn:hover {
+  background: rgba(0, 0, 0, 0.9);
+}
+
+/* Рейтинг сдвигаем левее, чтобы не конфликтовал с «⋮» */
+.rating {
+  right: 40px; /* было 6px */
+}
+
+.context-menu {
+  position: absolute;
+  top: 38px;
+  left: 6px; /* всегда вправо от кнопки */
+  background: #1e2127;
+  border: 1px solid #3a3f47;
+  border-radius: 6px;
+  padding: 0.25rem 0;
+  min-width: 120px;
+  max-width: 240px;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #e6e6e6;
+  text-align: left;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.context-menu button:hover {
+  background: #2a2e35;
 }
 </style>
