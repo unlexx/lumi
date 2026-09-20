@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
-import { onMounted } from 'vue'
 import { onKeyStroke } from '@vueuse/core'
 import Settings from './views/Settings.vue'
 
 const currentView = ref<'library' | 'settings'>('library')
+
+// === Интерфейсы ===
 
 interface ParsedVideo {
   title: string
@@ -31,22 +31,52 @@ interface VideoFile {
   extension: string
   parsed: ParsedVideo
   tmdb: TmdbInfo | null
+  media_type: 'movie' | 'tv_shows'
 }
 
-const videos = ref<VideoFile[]>([])
+interface Episode {
+  number: number
+  path: string
+  name: string
+  parsed: ParsedVideo
+}
+
+interface Season {
+  number: number
+  episodes: Episode[]
+}
+
+interface TvShow {
+  title: string
+  year: number | null
+  seasons: Season[]
+  tmdb: TmdbInfo | null
+}
+
+interface Library {
+  movies: VideoFile[]
+  tv_shows: TvShow[]
+}
+
+// === Состояние ===
+
+const library = ref<Library>({ movies: [], tv_shows: [] })
 const loading = ref(false)
 const error = ref<string | null>(null)
 const selectedVideo = ref<VideoFile | null>(null)
+const selectedShow = ref<TvShow | null>(null)
+
+// === Загрузка ===
 
 async function refreshLibrary() {
   loading.value = true
   error.value = null
   try {
-    videos.value = await invoke<VideoFile[]>('scan_all')
+    library.value = await invoke<Library>('scan_all')
     loadPosters()
   } catch (e) {
     error.value = String(e)
-    videos.value = []
+    library.value = { movies: [], tv_shows: [] }
   } finally {
     loading.value = false
   }
@@ -55,16 +85,29 @@ async function refreshLibrary() {
 onMounted(refreshLibrary)
 
 async function loadPosters() {
-  for (const video of videos.value) {
-    if (!video.tmdb?.poster_url) continue
+  for (const movie of library.value.movies) {
+    if (!movie.tmdb?.poster_url) continue
     try {
       const localPath = await invoke<string>('get_poster', {
-        tmdbId: video.tmdb.id,
-        posterPath: extractPosterPath(video.tmdb.poster_url)
+        tmdbId: movie.tmdb.id,
+        posterPath: extractPosterPath(movie.tmdb.poster_url)
       })
-      video.tmdb.poster_local = convertFileSrc(localPath)
+      movie.tmdb.poster_local = convertFileSrc(localPath)
     } catch (e) {
-      console.error('Poster error for', video.parsed.title, e)
+      console.error('Poster error for', movie.parsed.title, e)
+    }
+  }
+
+  for (const show of library.value.tv_shows) {
+    if (!show.tmdb?.poster_url) continue
+    try {
+      const localPath = await invoke<string>('get_poster', {
+        tmdbId: show.tmdb.id,
+        posterPath: extractPosterPath(show.tmdb.poster_url)
+      })
+      show.tmdb.poster_local = convertFileSrc(localPath)
+    } catch (e) {
+      console.error('Poster error for', show.title, e)
     }
   }
 }
@@ -75,22 +118,38 @@ function extractPosterPath(url: string): string {
   return idx >= 0 ? url.slice(idx + marker.length) : url
 }
 
-async function playVideo(video: VideoFile) {
+// === Действия ===
+
+async function playVideo(path: string) {
   try {
-    await invoke('play_video', { path: video.path })
+    await invoke('play_video', { path })
   } catch (e) {
     console.error('Play error:', e)
     error.value = String(e)
   }
 }
 
-function openDetails(video: VideoFile) {
+function openMovie(video: VideoFile) {
   selectedVideo.value = video
 }
 
-function closeDetails() {
+function closeMovie() {
   selectedVideo.value = null
 }
+
+function openShow(show: TvShow) {
+  selectedShow.value = show
+}
+
+function closeShow() {
+  selectedShow.value = null
+}
+
+function totalEpisodes(show: TvShow): number {
+  return show.seasons.reduce((sum, s) => sum + s.episodes.length, 0)
+}
+
+// === Клавиатура ===
 
 onKeyStroke('Backspace', (e) => {
   if (currentView.value === 'settings') {
@@ -101,6 +160,7 @@ onKeyStroke('Backspace', (e) => {
 
 onKeyStroke('Escape', () => {
   if (selectedVideo.value) selectedVideo.value = null
+  if (selectedShow.value) selectedShow.value = null
 })
 </script>
 
@@ -127,31 +187,80 @@ onKeyStroke('Escape', () => {
         </button>
       </nav>
     </header>
+
     <Settings v-if="currentView === 'settings'" />
+
     <div v-else>
+      <p v-if="loading" class="status">Сканирование...</p>
       <p v-if="error" class="error">{{ error }}</p>
-      <section v-if="videos.length" class="grid">
-        <article v-for="video in videos" :key="video.path" class="card" @click="openDetails(video)">
-          <div class="poster-wrap">
-            <img
-              v-if="video.tmdb?.poster_local"
-              :src="video.tmdb.poster_local"
-              :alt="video.tmdb.title"
-              class="poster"
-              loading="lazy"
-            />
-            <div v-else class="poster placeholder">Нет постера</div>
-            <div v-if="video.tmdb?.rating" class="rating">★ {{ video.tmdb.rating.toFixed(1) }}</div>
-          </div>
-          <div class="card-title">{{ video.tmdb?.title || video.parsed.title }}</div>
-          <div class="card-year">{{ video.parsed.year || '' }}</div>
-        </article>
+
+      <!-- Фильмы -->
+      <section v-if="library.movies.length" class="section">
+        <h2>Фильмы</h2>
+        <div class="grid">
+          <article
+            v-for="movie in library.movies"
+            :key="movie.path"
+            class="card"
+            @click="openMovie(movie)"
+          >
+            <div class="poster-wrap">
+              <img
+                v-if="movie.tmdb?.poster_local"
+                :src="movie.tmdb.poster_local"
+                :alt="movie.tmdb.title"
+                class="poster"
+                loading="lazy"
+              />
+              <div v-else class="poster placeholder">Нет постера</div>
+              <div v-if="movie.tmdb?.rating" class="rating">
+                ★ {{ movie.tmdb.rating.toFixed(1) }}
+              </div>
+            </div>
+            <div class="card-title">
+              {{ movie.tmdb?.title || movie.parsed.title }}
+            </div>
+            <div class="card-year">{{ movie.parsed.year || '' }}</div>
+          </article>
+        </div>
       </section>
+
+      <!-- Сериалы -->
+      <section v-if="library.tv_shows.length" class="section">
+        <h2>Сериалы</h2>
+        <div class="grid">
+          <article
+            v-for="show in library.tv_shows"
+            :key="show.title"
+            class="card"
+            @click="openShow(show)"
+          >
+            <div class="poster-wrap">
+              <img
+                v-if="show.tmdb?.poster_local"
+                :src="show.tmdb.poster_local"
+                :alt="show.title"
+                class="poster"
+                loading="lazy"
+              />
+              <div v-else class="poster placeholder">Сериал</div>
+              <div v-if="show.tmdb?.rating" class="rating">★ {{ show.tmdb.rating.toFixed(1) }}</div>
+            </div>
+            <div class="card-title">{{ show.title }}</div>
+            <div class="card-year">{{ show.year || '' }} · {{ totalEpisodes(show) }} сер.</div>
+          </article>
+        </div>
+      </section>
+
+      <p v-if="!loading && !library.movies.length && !library.tv_shows.length" class="status">
+        Библиотека пуста. Добавьте папки в настройках.
+      </p>
     </div>
-    <!-- Модалка с деталями -->
-    <div v-if="selectedVideo" class="modal-backdrop" @click="closeDetails">
+
+    <!-- Модалка фильма -->
+    <div v-if="selectedVideo" class="modal-backdrop" @click="closeMovie">
       <div class="modal" @click.stop>
-        <button class="close" @click="closeDetails">×</button>
+        <button class="close" @click="closeMovie">×</button>
         <div class="modal-content">
           <img
             v-if="selectedVideo.tmdb?.poster_local"
@@ -178,9 +287,27 @@ onKeyStroke('Escape', () => {
               <span v-if="selectedVideo.parsed.source">{{ selectedVideo.parsed.source }}</span>
               <span v-if="selectedVideo.parsed.codec">{{ selectedVideo.parsed.codec }}</span>
             </div>
-            <button class="play-btn" @click="playVideo(selectedVideo)">▶ Смотреть</button>
+            <button class="play-btn" @click="playVideo(selectedVideo.path)">▶ Смотреть</button>
             <div class="file-path">{{ selectedVideo.name }}</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Модалка сериала -->
+    <div v-if="selectedShow" class="modal-backdrop" @click="closeShow">
+      <div class="modal" @click.stop>
+        <button class="close" @click="closeShow">×</button>
+        <h2>{{ selectedShow.title }}</h2>
+        <div v-for="season in selectedShow.seasons" :key="season.number" class="season">
+          <h3>Сезон {{ season.number }}</h3>
+          <ul class="episode-list">
+            <li v-for="ep in season.episodes" :key="ep.path" class="episode">
+              <span class="ep-number">Серия {{ ep.number }}</span>
+              <span class="ep-name">{{ ep.name }}</span>
+              <button class="ep-play" @click="playVideo(ep.path)">▶</button>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
@@ -452,5 +579,75 @@ body {
 }
 .back-arrow:hover {
   color: #fff;
+}
+.section {
+  margin-bottom: 2rem;
+}
+
+.section h2 {
+  margin: 1rem 0 1rem;
+  font-size: 1.1rem;
+  color: #ccc;
+  font-weight: 500;
+}
+
+.status {
+  color: #888;
+  padding: 1rem 0;
+}
+
+.season {
+  margin-top: 1.5rem;
+}
+
+.season h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  color: #aaa;
+  font-weight: 500;
+}
+
+.episode-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.episode {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #2a2e35;
+}
+
+.ep-number {
+  font-weight: 600;
+  min-width: 80px;
+  color: #4a9eff;
+}
+
+.ep-name {
+  flex: 1;
+  font-size: 0.85rem;
+  color: #888;
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ep-play {
+  background: #2a2e35;
+  color: #e6e6e6;
+  border: 1px solid #3a3f47;
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.ep-play:hover {
+  background: #353a42;
 }
 </style>

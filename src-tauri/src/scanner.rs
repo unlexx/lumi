@@ -23,13 +23,46 @@ pub struct TmdbInfo {
     pub rating: Option<f64>,
 }
 
+// В Rust (scanner.rs или новый tv.rs)
+
+#[derive(Serialize, Clone)]
+pub struct TvShow {
+    pub title: String,              // "House of the Dragon"
+    pub year: Option<u32>,
+    pub seasons: Vec<Season>,
+    pub tmdb: Option<TmdbInfo>,     // для LUMI-9b
+}
+
+#[derive(Serialize, Clone)]
+pub struct Season {
+    pub number: u32,                // 3
+    pub episodes: Vec<Episode>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Episode {
+    pub number: u32,                // 1
+    pub path: String,
+    pub name: String,               // полное имя файла
+    pub parsed: ParsedVideo,        // из существующего парсера
+}
+
+#[derive(Serialize)]
+pub struct Library {
+    pub movies: Vec<VideoFile>,
+    pub tv_shows: Vec<TvShow>,
+}
+
 #[tauri::command]
-pub async fn scan_all() -> Result<Vec<VideoFile>, String> {
+pub async fn scan_all() -> Result<Library, String> {
     println!("=== scan_all started ===");
 
     let folders = load_folders();
     if folders.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Library {
+            movies: Vec::new(),
+            tv_shows: Vec::new(),
+        });
     }
 
     let api_key = std::env::var("TMDB_API_KEY")
@@ -87,6 +120,9 @@ pub async fn scan_all() -> Result<Vec<VideoFile>, String> {
     // TMDB lookup
     println!("=== TMDB lookup for {} videos ===", videos.len());
     for video in &mut videos {
+        if video.media_type != MediaType::Movie {
+            continue;
+        }
         match crate::tmdb::get_or_fetch(
             &client,
             &api_key,
@@ -117,5 +153,105 @@ pub async fn scan_all() -> Result<Vec<VideoFile>, String> {
         }
     }
 
-    Ok(videos)
+let (movies, tv_files): (Vec<VideoFile>, Vec<VideoFile>) = videos
+    .into_iter()
+    .partition(|v| v.media_type == MediaType::Movie);
+
+let mut tv_shows = group_into_tv_shows(tv_files);
+
+// TMDB lookup для сериалов — один запрос на сериал
+println!("=== TMDB lookup for {} TV shows ===", tv_shows.len());
+for show in &mut tv_shows {
+    match crate::tmdb::get_or_fetch_tv(
+        &client,
+        &api_key,
+        &show.title,
+        show.year,
+    )
+    .await
+    {
+        Ok(Some(tv)) => {
+            let poster_url = tv
+                .poster_path
+                .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p));
+
+            // Красивое название из TMDB (вместо lowercase из парсера)
+            show.title = tv.name.clone();
+
+            show.tmdb = Some(TmdbInfo {
+                id: tv.id,
+                title: tv.name,           // TmdbInfo использует поле "title"
+                overview: tv.overview,
+                poster_url,
+                rating: tv.vote_average,
+            });
+        }
+        Ok(None) => {
+            println!("  → No results for '{}'", show.title);
+        }
+        Err(e) => {
+            eprintln!("TMDB error for '{}': {}", show.title, e);
+        }
+    }
+}
+
+Ok(Library { movies, tv_shows })
+}
+
+use std::collections::HashMap;
+use crate::tv_parser::parse_tv_filename;
+
+pub fn group_into_tv_shows(videos: Vec<VideoFile>) -> Vec<TvShow> {
+    // Ключ: (title_lowercase, year)
+    let mut groups: HashMap<(String, Option<u32>), Vec<VideoFile>> = HashMap::new();
+
+    for video in videos.into_iter().filter(|v| v.media_type == MediaType::TvShows) {
+        let parsed_tv = parse_tv_filename(&video.name);
+        
+        // Если не распознали сезон/эпизод — пропускаем (это не серия)
+        if parsed_tv.season.is_none() || parsed_tv.episode.is_none() {
+            continue;
+        }
+
+        let key = (parsed_tv.title.to_lowercase(), parsed_tv.year);
+        groups.entry(key).or_default().push(video);
+    }
+
+    let mut shows = Vec::new();
+
+    for ((title_lower, year), files) in groups {
+        let mut seasons_map: HashMap<u32, Vec<Episode>> = HashMap::new();
+
+        for file in files {
+            let parsed_tv = parse_tv_filename(&file.name);
+            let season_num = parsed_tv.season.unwrap();
+            let episode_num = parsed_tv.episode.unwrap();
+
+            seasons_map.entry(season_num).or_default().push(Episode {
+                number: episode_num,
+                path: file.path.clone(),
+                name: file.name.clone(),
+                parsed: file.parsed.clone(),
+            });
+        }
+
+        let mut seasons: Vec<Season> = seasons_map
+            .into_iter()
+            .map(|(number, mut episodes)| {
+                episodes.sort_by_key(|e| e.number);
+                Season { number, episodes }
+            })
+            .collect();
+        seasons.sort_by_key(|s| s.number);
+
+        shows.push(TvShow {
+            title: title_lower,   // потом заменим на красивое из TMDB
+            year,
+            seasons,
+            tmdb: None,
+        });
+    }
+
+    shows.sort_by(|a, b| a.title.cmp(&b.title));
+    shows
 }
