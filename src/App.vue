@@ -41,6 +41,7 @@ interface Episode {
   path: string
   name: string
   parsed: ParsedVideo
+  watched: boolean
 }
 
 interface Season {
@@ -86,7 +87,6 @@ async function refreshLibrary() {
   }
 }
 
-onMounted(refreshLibrary)
 onMounted(async () => {
   await listen('scan_progress', (event) => {
     scanProgress.value = event.payload as {
@@ -98,12 +98,26 @@ onMounted(async () => {
 
   await listen('watch_status_updated', (event) => {
     const { path, watched } = event.payload as { path: string; watched: boolean }
+
+    // Проверяем фильмы
     const movie = library.value.movies.find((m) => m.path === path)
-    if (movie) movie.watched = watched
+    if (movie) {
+      movie.watched = watched
+      return
+    }
+
+    // Проверяем эпизоды сериалов
+    for (const show of library.value.tv_shows) {
+      for (const season of show.seasons) {
+        const episode = season.episodes.find((e) => e.path === path)
+        if (episode) {
+          episode.watched = watched
+          return
+        }
+      }
+    }
   })
 
-  // Запускаем первое сканирование
-  refreshLibrary()
   refreshLibrary()
 })
 async function loadPosters() {
@@ -169,6 +183,11 @@ function closeShow() {
 
 function totalEpisodes(show: TvShow): number {
   return show.seasons.reduce((sum, s) => sum + s.episodes.length, 0)
+}
+
+function isShowWatched(show: TvShow): boolean {
+  const all = show.seasons.flatMap((s) => s.episodes)
+  return all.length > 0 && all.every((e) => e.watched)
 }
 
 // === Клавиатура ===
@@ -286,6 +305,7 @@ onKeyStroke('Escape', () => {
                 <div v-if="show.tmdb?.rating" class="rating">
                   ★ {{ show.tmdb.rating.toFixed(1) }}
                 </div>
+                <div v-if="isShowWatched(show)" class="watched-badge">✓</div>
               </div>
               <div class="card-title">{{ show.title }}</div>
               <div class="card-year">{{ show.year || '' }} · {{ totalEpisodes(show) }} сер.</div>
@@ -344,9 +364,15 @@ onKeyStroke('Escape', () => {
         <div v-for="season in selectedShow.seasons" :key="season.number" class="season">
           <h3>Сезон {{ season.number }}</h3>
           <ul class="episode-list">
-            <li v-for="ep in season.episodes" :key="ep.path" class="episode">
+            <li
+              v-for="ep in season.episodes"
+              :key="ep.path"
+              class="episode"
+              :class="{ watched: ep.watched }"
+            >
               <span class="ep-number">Серия {{ ep.number }}</span>
               <span class="ep-name">{{ ep.name }}</span>
+              <span v-if="ep.watched" class="ep-watched">✓</span>
               <button class="ep-play" @click="playVideo(ep.path)">▶</button>
             </li>
           </ul>
@@ -746,5 +772,15 @@ body {
   justify-content: center;
   font-size: 0.85rem;
   font-weight: bold;
+}
+.ep-watched {
+  color: #4a9eff;
+  font-weight: bold;
+  font-size: 1rem;
+  margin-right: 0.5rem;
+}
+
+.episode.watched .ep-number {
+  color: #4a9eff;
 }
 </style>
