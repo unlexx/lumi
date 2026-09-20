@@ -22,6 +22,7 @@ pub struct VideoFile {
 pub struct TmdbInfo {
     pub id: u32,
     pub title: String,
+    pub original_title: Option<String>,
     pub overview: Option<String>,
     pub poster_url: Option<String>,
     pub rating: Option<f64>,
@@ -167,10 +168,10 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
                 let poster_url = movie
                     .poster_path
                     .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p));
-
                 video.tmdb = Some(TmdbInfo {
                     id: movie.id,
                     title: movie.title,
+                    original_title: movie.original_title,
                     overview: movie.overview,
                     poster_url,
                     rating: movie.vote_average,
@@ -206,6 +207,7 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
                 show.tmdb = Some(TmdbInfo {
                     id: tv.id,
                     title: tv.name, // TmdbInfo использует поле "title"
+                    original_title: tv.original_name,
                     overview: tv.overview,
                     poster_url,
                     rating: tv.vote_average,
@@ -327,6 +329,5 @@ fn extract_title_from_path(path: &str) -> String {
 #[tauri::command]
 pub fn set_watched_bulk(paths: Vec<String>, watched: bool) -> Result<(), String> {
     let conn = crate::cache::init_db().map_err(|e| e.to_string())?;
-    crate::cache::set_watched_bulk(&conn, &paths, watched)
-        .map_err(|e| e.to_string())
+    crate::cache::set_watched_bulk(&conn, &paths, watched).map_err(|e| e.to_string())
 }

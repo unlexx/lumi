@@ -16,9 +16,10 @@
     "[json]": {
       "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
-      "[rust]": {
-    "editor.defaultFormatter": "rust-lang.rust-analyzer",
-    "editor.formatOnSave": true
-  }
+    "[rust]": {
+      "editor.defaultFormatter": "rust-lang.rust-analyzer",
+      "editor.formatOnSave": true
+    },
+    "git.branchPrefix": "feature/LUMI-"
   }
 }

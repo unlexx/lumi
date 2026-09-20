@@ -20,6 +20,7 @@ interface ParsedVideo {
 interface TmdbInfo {
   id: number
   title: string
+  original_title: string | null
   overview: string | null
   poster_url: string | null
   poster_local: string | null
@@ -832,12 +833,15 @@ body {
 .modal-content {
   display: flex;
   gap: 1.5rem;
+  align-items: flex-start;
 }
 
 .modal-poster {
   width: 240px;
+  height: auto;
   border-radius: 8px;
   flex-shrink: 0;
+  object-fit: contain;
 }
 
 .modal-info {
@@ -863,6 +867,7 @@ body {
   color: #bbb;
   line-height: 1.5;
   margin: 0.75rem 0;
+  font-size: 1.2rem;
 }
 
 .tags {

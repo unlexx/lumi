@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct CachedShow {
     pub tmdb_id: u32,
     pub name: String,
+    pub original_name: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
     pub rating: Option<f64>,
@@ -24,6 +25,7 @@ pub struct WatchStatus {
 pub struct CachedMovie {
     pub tmdb_id: u32,
     pub title: String,
+    pub original_title: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
     pub rating: Option<f64>,
@@ -64,6 +66,7 @@ pub fn init_db() -> SqlResult<Connection> {
             id INTEGER PRIMARY KEY,
             tmdb_id INTEGER NOT NULL,
             title TEXT NOT NULL,
+            original_title TEXT,
             overview TEXT,
             poster_path TEXT,
             rating REAL,
@@ -84,6 +87,7 @@ pub fn init_db() -> SqlResult<Connection> {
             id INTEGER PRIMARY KEY,
             tmdb_id INTEGER NOT NULL,
             name TEXT NOT NULL,
+            original_name TEXT,
             overview TEXT,
             poster_path TEXT,
             rating REAL,
@@ -113,7 +117,7 @@ pub fn init_db() -> SqlResult<Connection> {
 
 pub fn find_cached(conn: &Connection, title: &str) -> Option<CachedMovie> {
     conn.query_row(
-        "SELECT tmdb_id, title, overview, poster_path, rating, release_date
+        "SELECT tmdb_id, title, original_title, overview, poster_path, rating, release_date
          FROM movies
          WHERE LOWER(title) = LOWER(?1)
          LIMIT 1",
@@ -122,10 +126,11 @@ pub fn find_cached(conn: &Connection, title: &str) -> Option<CachedMovie> {
             Ok(CachedMovie {
                 tmdb_id: row.get(0)?,
                 title: row.get(1)?,
-                overview: row.get(2)?,
-                poster_path: row.get(3)?,
-                rating: row.get(4)?,
-                release_date: row.get(5)?,
+                original_title: row.get(2)?,
+                overview: row.get(3)?,
+                poster_path: row.get(4)?,
+                rating: row.get(5)?,
+                release_date: row.get(6)?,
             })
         },
     )
@@ -141,11 +146,12 @@ pub fn save_movie(conn: &Connection, movie: &TmdbMovie) -> SqlResult<()> {
 
     conn.execute(
         "INSERT OR REPLACE INTO movies
-         (tmdb_id, title, overview, poster_path, rating, release_date, cached_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (tmdb_id, title, original_title, overview, poster_path, rating, release_date, cached_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             movie.id,
             movie.title,
+            movie.original_title,
             movie.overview,
             movie.poster_path,
             movie.vote_average,
@@ -168,6 +174,7 @@ pub fn find_cached_tv(conn: &Connection, name: &str) -> Option<CachedShow> {
             Ok(CachedShow {
                 tmdb_id: row.get(0)?,
                 name: row.get(1)?,
+                original_name: row.get(2)?,
                 overview: row.get(2)?,
                 poster_path: row.get(3)?,
                 rating: row.get(4)?,
@@ -187,11 +194,12 @@ pub fn save_tv_show(conn: &Connection, show: &crate::tmdb::TmdbShow) -> SqlResul
 
     conn.execute(
         "INSERT OR REPLACE INTO tv_shows
-         (tmdb_id, name, overview, poster_path, rating, first_air_date, cached_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (tmdb_id, name, original_name, overview, poster_path, rating, first_air_date, cached_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             show.id,
             show.name,
+            show.original_name,
             show.overview,
             show.poster_path,
             show.vote_average,

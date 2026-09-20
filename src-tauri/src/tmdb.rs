@@ -11,6 +11,7 @@ pub struct TmdbSearchResponse {
 pub struct TmdbMovie {
     pub id: u32,
     pub title: String,
+    pub original_title: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
     pub vote_average: Option<f64>,
@@ -25,11 +26,12 @@ pub struct TmdbTvSearchResponse {
 #[derive(Deserialize, Debug, Clone)]
 pub struct TmdbShow {
     pub id: u32,
-    pub name: String,                    // у сериалов "name", не "title"
+    pub name: String, // у сериалов "name", не "title"
+    pub original_name: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
     pub vote_average: Option<f64>,
-    pub first_air_date: Option<String>,  // у сериалов "first_air_date", не "release_date"
+    pub first_air_date: Option<String>, // у сериалов "first_air_date", не "release_date"
 }
 
 #[tauri::command]
@@ -63,8 +65,7 @@ pub async fn get_poster(tmdb_id: u32, poster_path: String) -> Result<String, Str
         .await
         .map_err(|e| format!("Read error: {}", e))?;
 
-    std::fs::write(&file_path, &bytes)
-        .map_err(|e| format!("Write error: {}", e))?;
+    std::fs::write(&file_path, &bytes).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(file_path.to_string_lossy().to_string())
 }
@@ -89,7 +90,7 @@ pub async fn search_movie(
     year: Option<u32>,
 ) -> Result<Option<TmdbMovie>, String> {
     let url = format!(
-        "https://api.themoviedb.org/3/search/movie?api_key={}&query={}",
+        "https://api.themoviedb.org/3/search/movie?api_key={}&query={}&language=ru-RU",
         api_key,
         urlencoding::encode(title)
     );
@@ -142,7 +143,7 @@ pub async fn search_tv(
     year: Option<u32>,
 ) -> Result<Option<TmdbShow>, String> {
     let url = format!(
-        "https://api.themoviedb.org/3/search/tv?api_key={}&query={}",
+        "https://api.themoviedb.org/3/search/tv?api_key={}&query={}&language=ru-RU",
         api_key,
         urlencoding::encode(title)
     );
@@ -201,6 +202,7 @@ pub async fn get_or_fetch(
             return Ok(Some(TmdbMovie {
                 id: cached.tmdb_id,
                 title: cached.title,
+                original_title: cached.original_title,
                 overview: cached.overview,
                 poster_path: cached.poster_path,
                 vote_average: cached.rating,
@@ -228,7 +230,7 @@ pub async fn get_or_fetch(
     Ok(result)
 }
 
- pub async fn get_or_fetch_tv(
+pub async fn get_or_fetch_tv(
     client: &Client,
     api_key: &str,
     title: &str,
@@ -242,6 +244,7 @@ pub async fn get_or_fetch(
             return Ok(Some(TmdbShow {
                 id: cached.tmdb_id,
                 name: cached.name,
+                original_name: cached.original_name,
                 overview: cached.overview,
                 poster_path: cached.poster_path,
                 vote_average: cached.rating,
