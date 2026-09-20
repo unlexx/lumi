@@ -7,6 +7,7 @@ mod player;
 mod scanner;
 mod tmdb;
 mod tv_parser;
+mod logger;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
