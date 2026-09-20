@@ -22,7 +22,8 @@ pub fn run() {
             player::play_video,
             config::get_folders,
             config::add_folder,
-            config::remove_folder
+            config::remove_folder,
+            scanner::get_continue_watching,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,22 +1,23 @@
 use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command};
-use std::time::Duration;
 
 const SOCKET_NAME: &str = "mpvsocket";
 
 /// Запускает mpv с указанным файлом и IPC-сокетом.
-pub fn launch(file_path: &str) -> Result<Child, String> {
-    let child = Command::new("mpv")
-        .arg(format!("--input-ipc-server=\\\\.\\pipe\\{}", SOCKET_NAME))
-        .arg(file_path)
+pub fn launch(file_path: &str, start_position: Option<f64>) -> Result<Child, String> {
+    let mut cmd = Command::new("mpv");
+    cmd.arg(format!("--input-ipc-server=\\\\.\\pipe\\{}", SOCKET_NAME));
+
+    if let Some(pos) = start_position {
+        cmd.arg(format!("--start={}", pos));
+    }
+
+    cmd.arg(file_path);
+
+    let child = cmd
         .spawn()
-        .map_err(|e| {
-            format!(
-                "Не удалось запустить mpv: {}. Убедитесь, что mpv в PATH.",
-                e
-            )
-        })?;
+        .map_err(|e| format!("Не удалось запустить mpv: {}. Убедитесь, что mpv в PATH.", e))?;
 
     Ok(child)
 }

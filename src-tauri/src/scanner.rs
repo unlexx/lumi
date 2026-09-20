@@ -56,6 +56,17 @@ pub struct Library {
     pub tv_shows: Vec<TvShow>,
 }
 
+#[derive(Serialize)]
+pub struct ContinueItem {
+    pub path: String,
+    pub title: String,
+    pub poster_url: Option<String>,
+    pub position: f64,
+    pub duration: f64,
+    pub progress: f64,
+    pub media_type: MediaType,
+}
+
 #[tauri::command]
 pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     println!("=== scan_all started ===");
@@ -268,4 +279,37 @@ pub fn group_into_tv_shows(videos: Vec<VideoFile>) -> Vec<TvShow> {
 
     shows.sort_by(|a, b| a.title.cmp(&b.title));
     shows
+}
+
+#[tauri::command]
+pub fn get_continue_watching(paths: Vec<String>) -> Vec<ContinueItem> {
+    let conn = match crate::cache::init_db() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let in_progress = crate::cache::get_in_progress(&conn);
+    let path_set: std::collections::HashSet<&str> =
+        paths.iter().map(|s| s.as_str()).collect();
+
+    in_progress
+        .into_iter()
+        .filter(|w| path_set.contains(w.file_path.as_str()))
+        .map(|w| ContinueItem {
+            title: extract_title_from_path(&w.file_path),
+            path: w.file_path,
+            poster_url: None,   // заполним на фронтенде
+            position: w.position,
+            duration: w.duration,
+            progress: w.position / w.duration,
+            media_type: MediaType::Movie,   // заполним на фронтенде
+        })
+        .collect()
+}
+
+fn extract_title_from_path(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
 }
