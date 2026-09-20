@@ -32,9 +32,15 @@ pub struct CachedMovie {
     pub release_date: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct WatchInfo {
+    pub watched: bool,
+    pub position: Option<f64>,
+    pub duration: Option<f64>,
+}
+
 pub fn project_dirs() -> ProjectDirs {
-    ProjectDirs::from("dev", "unlexx", "lumi")
-        .expect("Не удалось определить директории проекта")
+    ProjectDirs::from("dev", "unlexx", "lumi").expect("Не удалось определить директории проекта")
 }
 
 pub fn db_path() -> PathBuf {
@@ -93,20 +99,19 @@ pub fn init_db() -> SqlResult<Connection> {
         "CREATE INDEX IF NOT EXISTS idx_tv_name ON tv_shows(name)",
         [],
     )?;
-conn.execute(
-    "CREATE TABLE IF NOT EXISTS watch_status (
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS watch_status (
         file_path TEXT PRIMARY KEY,
         watched INTEGER NOT NULL DEFAULT 0,
         position REAL,
         duration REAL,
         updated_at INTEGER NOT NULL
     )",
-    [],
-)?;
+        [],
+    )?;
 
     Ok(conn)
 }
-
 
 pub fn find_cached(conn: &Connection, title: &str) -> Option<CachedMovie> {
     conn.query_row(
@@ -267,4 +272,23 @@ pub fn get_in_progress(conn: &Connection) -> Vec<WatchStatus> {
         Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
         Err(_) => Vec::new(),
     }
+}
+
+pub fn get_watch_info(conn: &Connection, file_path: &str) -> WatchInfo {
+    conn.query_row(
+        "SELECT watched, position, duration
+         FROM watch_status
+         WHERE file_path = ?1",
+        rusqlite::params![file_path],
+        |row| {
+            Ok(WatchInfo {
+                watched: row.get::<_, i64>(0)? != 0,
+                position: row.get(1)?,
+                duration: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .unwrap_or(None)
+    .unwrap_or_default()
 }
