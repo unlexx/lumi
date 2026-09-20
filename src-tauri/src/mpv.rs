@@ -1,8 +1,4 @@
-use interprocess::local_socket::{
-    prelude::*,
-    GenericNamespaced,
-    Stream,
-};
+use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -15,7 +11,12 @@ pub fn launch(file_path: &str) -> Result<Child, String> {
         .arg(format!("--input-ipc-server=\\\\.\\pipe\\{}", SOCKET_NAME))
         .arg(file_path)
         .spawn()
-        .map_err(|e| format!("Не удалось запустить mpv: {}. Убедитесь, что mpv в PATH.", e))?;
+        .map_err(|e| {
+            format!(
+                "Не удалось запустить mpv: {}. Убедитесь, что mpv в PATH.",
+                e
+            )
+        })?;
 
     Ok(child)
 }
@@ -28,8 +29,8 @@ fn send_command(command: &str) -> Result<String, String> {
         .map_err(|e| format!("Invalid socket name: {}", e))?;
 
     // Stream::connect принимает имя
-    let mut stream = Stream::connect(name)
-        .map_err(|e| format!("Не удалось подключиться к mpv IPC: {}", e))?;
+    let mut stream =
+        Stream::connect(name).map_err(|e| format!("Не удалось подключиться к mpv IPC: {}", e))?;
 
     stream
         .write_all(format!("{}\n", command).as_bytes())
@@ -72,21 +73,4 @@ fn parse_f64_response(response: &str) -> Result<f64, String> {
         .trim()
         .parse::<f64>()
         .map_err(|e| format!("Parse error: {} in '{}'", e, rest))
-}
-
-/// Ждёт завершения процесса mpv с таймаутом. Возвращает true, если процесс завершился.
-pub fn wait_for_exit(child: &mut Child, timeout_secs: u64) -> bool {
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return true,
-            Ok(None) => {
-                if start.elapsed() > Duration::from_secs(timeout_secs) {
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            Err(_) => return true,
-        }
-    }
 }
