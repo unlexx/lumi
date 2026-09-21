@@ -177,3 +177,7 @@ For every new task:
 4. Pull request to `master`.
 
 When starting a task, ask the assistant for the issue title and description first.
+
+
+## Current work
+See [REFACTORING.md](./REFACTORING.md) for the ongoing Vue refactoring plan.
