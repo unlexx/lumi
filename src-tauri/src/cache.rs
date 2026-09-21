@@ -1,17 +1,27 @@
-use crate::tmdb::{MatchResult, TmdbMovie};
+use crate::tmdb::MatchResult;
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
-pub struct CachedShow {
-    pub tmdb_id: u32,
+pub struct MediaItem {
+    pub uid: String,
+    pub path: String,
     pub name: String,
-    pub original_name: Option<String>,
+    pub media_type: String,
+    pub tmdb_id: Option<u32>,
+    pub title: Option<String>,
+    pub original_title: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
     pub rating: Option<f64>,
-    pub first_air_date: Option<String>,
+    pub release_date: Option<String>,
+    pub parsed_title: String,
+    pub parsed_year: Option<u32>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+    pub scanned_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -21,22 +31,18 @@ pub struct WatchStatus {
     pub duration: f64,
 }
 
-#[derive(Debug, Clone)]
-pub struct CachedMovie {
-    pub tmdb_id: u32,
-    pub title: String,
-    pub original_title: Option<String>,
-    pub overview: Option<String>,
-    pub poster_path: Option<String>,
-    pub rating: Option<f64>,
-    pub release_date: Option<String>,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct WatchInfo {
     pub watched: bool,
     pub position: Option<f64>,
     pub duration: Option<f64>,
+}
+
+/// UID файла = хеш от имени файла (с расширением).
+/// Используется как первичный ключ в media_items.
+pub fn file_uid(name: &str) -> String {
+    use xxhash_rust::xxh64::xxh64;
+    format!("{:016x}", xxh64(name.as_bytes(), 0))
 }
 
 pub fn project_dirs() -> ProjectDirs {
@@ -60,47 +66,39 @@ pub fn posters_dir() -> PathBuf {
 
 pub fn init_db() -> SqlResult<Connection> {
     let conn = Connection::open(db_path())?;
-
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS movies (
-            id INTEGER PRIMARY KEY,
-            tmdb_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            original_title TEXT,
-            overview TEXT,
-            poster_path TEXT,
-            rating REAL,
-            release_date TEXT,
-            cached_at INTEGER NOT NULL
-        )",
+        "CREATE TABLE IF NOT EXISTS media_items (
+    uid TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    tmdb_id INTEGER,
+    title TEXT,
+    original_title TEXT,
+    overview TEXT,
+    poster_path TEXT,
+    rating REAL,
+    release_date TEXT,
+    parsed_title TEXT,
+    parsed_year INTEGER,
+    season INTEGER,
+    episode INTEGER,
+    scanned_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+)",
         [],
     )?;
 
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_title_year ON movies(title)",
-        [],
-    )?;
-
-    // Новая таблица для сериалов
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS tv_shows (
-            id INTEGER PRIMARY KEY,
-            tmdb_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            original_name TEXT,
-            overview TEXT,
-            poster_path TEXT,
-            rating REAL,
-            first_air_date TEXT,
-            cached_at INTEGER NOT NULL
-        )",
+        "CREATE INDEX IF NOT EXISTS idx_media_tmdb ON media_items(tmdb_id)",
         [],
     )?;
 
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tv_name ON tv_shows(name)",
+        "CREATE INDEX IF NOT EXISTS idx_media_type ON media_items(media_type)",
         [],
     )?;
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS watch_status (
         file_path TEXT PRIMARY KEY,
@@ -113,102 +111,6 @@ pub fn init_db() -> SqlResult<Connection> {
     )?;
 
     Ok(conn)
-}
-
-pub fn find_cached(conn: &Connection, title: &str) -> Option<CachedMovie> {
-    conn.query_row(
-        "SELECT tmdb_id, title, original_title, overview, poster_path, rating, release_date
-         FROM movies
-         WHERE LOWER(original_title) = LOWER(?1) OR LOWER(title) = LOWER(?1)
-         LIMIT 1",
-        rusqlite::params![title],
-        |row| {
-            Ok(CachedMovie {
-                tmdb_id: row.get(0)?,
-                title: row.get(1)?,
-                original_title: row.get(2)?,
-                overview: row.get(3)?,
-                poster_path: row.get(4)?,
-                rating: row.get(5)?,
-                release_date: row.get(6)?,
-            })
-        },
-    )
-    .optional()
-    .unwrap_or(None)
-}
-
-pub fn save_movie(conn: &Connection, movie: &TmdbMovie) -> SqlResult<()> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    conn.execute(
-        "INSERT OR REPLACE INTO movies
-         (tmdb_id, title, original_title, overview, poster_path, rating, release_date, cached_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![
-            movie.id,
-            movie.title,
-            movie.original_title,
-            movie.overview,
-            movie.poster_path,
-            movie.vote_average,
-            movie.release_date,
-            now,
-        ],
-    )?;
-
-    Ok(())
-}
-
-pub fn find_cached_tv(conn: &Connection, name: &str) -> Option<CachedShow> {
-    conn.query_row(
-        "SELECT tmdb_id, name, original_name, overview, poster_path, rating, first_air_date
-         FROM tv_shows
-         WHERE LOWER(original_name) = LOWER(?1) OR LOWER(name) = LOWER(?1)
-         LIMIT 1",
-        rusqlite::params![name],
-        |row| {
-            Ok(CachedShow {
-                tmdb_id: row.get(0)?,
-                name: row.get(1)?,
-                original_name: row.get(2)?,
-                overview: row.get(3)?,
-                poster_path: row.get(4)?,
-                rating: row.get(5)?,
-                first_air_date: row.get(6)?,
-            })
-        },
-    )
-    .optional()
-    .unwrap_or(None)
-}
-
-pub fn save_tv_show(conn: &Connection, show: &crate::tmdb::TmdbShow) -> SqlResult<()> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    conn.execute(
-        "INSERT OR REPLACE INTO tv_shows
-         (tmdb_id, name, original_name, overview, poster_path, rating, first_air_date, cached_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![
-            show.id,
-            show.name,
-            show.original_name,
-            show.overview,
-            show.poster_path,
-            show.vote_average,
-            show.first_air_date,
-            now,
-        ],
-    )?;
-
-    Ok(())
 }
 
 pub fn mark_watched(
@@ -365,4 +267,194 @@ pub fn save_manual_match(result: &MatchResult, media_type: &str) -> Result<(), S
     }
 
     Ok(())
+}
+
+pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
+    conn.query_row(
+        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
+                rating, release_date, parsed_title, parsed_year, season, episode,
+                scanned_at, updated_at
+         FROM media_items WHERE uid = ?1",
+        rusqlite::params![uid],
+        |row| {
+            Ok(MediaItem {
+                uid: row.get(0)?,
+                path: row.get(1)?,
+                name: row.get(2)?,
+                media_type: row.get(3)?,
+                tmdb_id: row.get(4)?,
+                title: row.get(5)?,
+                original_title: row.get(6)?,
+                overview: row.get(7)?,
+                poster_path: row.get(8)?,
+                rating: row.get(9)?,
+                release_date: row.get(10)?,
+                parsed_title: row.get(11)?,
+                parsed_year: row.get(12)?,
+                season: row.get(13)?,
+                episode: row.get(14)?,
+                scanned_at: row.get(15)?,
+                updated_at: row.get(16)?,
+            })
+        },
+    )
+    .optional()
+    .unwrap_or(None)
+}
+
+pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO media_items
+         (uid, path, name, media_type, tmdb_id, title, original_title, overview,
+          poster_path, rating, release_date, parsed_title, parsed_year, season,
+          episode, scanned_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        rusqlite::params![
+            item.uid,
+            item.path,
+            item.name,
+            item.media_type,
+            item.tmdb_id,
+            item.title,
+            item.original_title,   // ← добавили
+            item.overview,
+            item.poster_path,
+            item.rating,
+            item.release_date,
+            item.parsed_title,
+            item.parsed_year,
+            item.season,
+            item.episode,
+            item.scanned_at,
+            item.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn update_path(conn: &Connection, uid: &str, new_path: &str) -> SqlResult<()> {
+    let now = now_ts();
+    conn.execute(
+        "UPDATE media_items SET path = ?1, updated_at = ?2 WHERE uid = ?3",
+        rusqlite::params![new_path, now, uid],
+    )?;
+    Ok(())
+}
+
+pub fn update_tmdb(
+    conn: &Connection,
+    uid: &str,
+    tmdb_id: u32,
+    title: &str,
+    original_title: Option<&str>,
+    overview: Option<&str>,
+    poster_path: Option<&str>,
+    rating: Option<f64>,
+    release_date: Option<&str>,
+) -> SqlResult<()> {
+    let now = now_ts();
+    conn.execute(
+        "UPDATE media_items
+         SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
+             poster_path = ?5, rating = ?6, release_date = ?7, updated_at = ?8
+         WHERE uid = ?9",
+        rusqlite::params![
+            tmdb_id,
+            title,
+            original_title,
+            overview,
+            poster_path,
+            rating,
+            release_date,
+            now,
+            uid,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
+    let mut stmt = match conn.prepare(
+        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
+                rating, release_date, parsed_title, parsed_year, season, episode,
+                scanned_at, updated_at
+         FROM media_items",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let rows = stmt.query_map([], |row| {
+        Ok(MediaItem {
+            uid: row.get(0)?,
+            path: row.get(1)?,
+            name: row.get(2)?,
+            media_type: row.get(3)?,
+            tmdb_id: row.get(4)?,
+            title: row.get(5)?,
+            original_title: row.get(6)?,
+            overview: row.get(7)?,
+            poster_path: row.get(8)?,
+            rating: row.get(9)?,
+            release_date: row.get(10)?,
+            parsed_title: row.get(11)?,
+            parsed_year: row.get(12)?,
+            season: row.get(13)?,
+            episode: row.get(14)?,
+            scanned_at: row.get(15)?,
+            updated_at: row.get(16)?,
+        })
+    });
+
+    match rows {
+        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
+    let mut stmt = match conn.prepare(
+        "SELECT uid, path, name, media_type, tmdb_id, title, get_undefined, overview, poster_path,
+                rating, release_date, parsed_title, parsed_year, season, episode,
+                scanned_at, updated_at
+         FROM media_items
+         WHERE tmdb_id IS NULL",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let rows = stmt.query_map([], |row| {
+        Ok(MediaItem {
+            uid: row.get(0)?,
+            path: row.get(1)?,
+            name: row.get(2)?,
+            media_type: row.get(3)?,
+            tmdb_id: row.get(4)?,
+            title: row.get(5)?,
+            original_title: row.get(6)?,
+            overview: row.get(7)?,
+            poster_path: row.get(8)?,
+            rating: row.get(9)?,
+            release_date: row.get(10)?,
+            parsed_title: row.get(11)?,
+            parsed_year: row.get(12)?,
+            season: row.get(13)?,
+            episode: row.get(14)?,
+            scanned_at: row.get(15)?,
+            updated_at: row.get(16)?,
+        })
+    });
+
+    match rows {
+        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn now_ts() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
