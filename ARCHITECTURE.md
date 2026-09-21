@@ -168,3 +168,12 @@ Examples:
 - `refactor: extract MovieCard and ShowCard`
 
 
+## Workflow
+
+For every new task:
+1. Create a GitHub issue with title and description.
+2. Branch: `feature/LUMI-XX` or `fix/...`.
+3. Commit with conventional format.
+4. Pull request to `master`.
+
+When starting a task, ask the assistant for the issue title and description first.
