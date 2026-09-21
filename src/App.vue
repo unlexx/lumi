@@ -8,98 +8,20 @@ import MediaGrid from './components/MediaGrid.vue'
 import UndefinedCard from './components/UndefinedCard.vue'
 import UndefinedModal from './components/UndefinedModal.vue'
 import { useUndefined } from './composables/useUndefined'
-import type { UndefinedItem } from './composables/useUndefined'
+import type {
+  VideoFile,
+  TvShow,
+  Episode,
+  Library,
+  ContinueItem,
+  TmdbSearchResult,
+  MatchResult,
+  UndefinedItem,
+} from '@/types'
 
 const currentView = ref<'library' | 'settings'>('library')
 const scanProgress = ref<{ current: number; total: number; folder: string } | null>(null)
 // === Интерфейсы ===
-
-interface ParsedVideo {
-  title: string
-  year: number | null
-  resolution: string | null
-  source: string | null
-  codec: string | null
-}
-
-interface TmdbInfo {
-  id: number
-  title: string
-  original_title: string | null
-  overview: string | null
-  poster_url: string | null
-  poster_local: string | null
-  rating: number | null
-}
-
-interface VideoFile {
-  uid: string
-  path: string
-  name: string
-  extension: string
-  parsed: ParsedVideo
-  tmdb: TmdbInfo | null
-  media_type: 'movie' | 'tv_shows'
-  watched: boolean
-  position: number | null
-  duration: number | null
-}
-
-interface Episode {
-  number: number
-  path: string
-  name: string
-  parsed: ParsedVideo
-  watched: boolean
-  position: number | null
-  duration: number | null
-}
-
-interface Season {
-  number: number
-  episodes: Episode[]
-}
-
-interface TvShow {
-  title: string
-  year: number | null
-  seasons: Season[]
-  tmdb: TmdbInfo | null
-}
-
-interface Library {
-  movies: VideoFile[]
-  tv_shows: TvShow[]
-}
-
-interface ContinueItem {
-  path: string
-  title: string
-  poster_url: string | null
-  position: number
-  duration: number
-  progress: number
-  media_type: 'movie' | 'tv_shows'
-}
-
-interface TmdbSearchResult {
-  id: number
-  title: string
-  original_title: string | null
-  overview: string | null
-  poster_url: string | null
-  poster_data: string | null
-  year: number | null
-}
-
-interface MatchResult {
-  tmdb_id: number
-  title: string
-  original_title: string | null
-  overview: string | null
-  poster_url: string | null
-  rating: number | null
-}
 
 // === Состояние ===
 

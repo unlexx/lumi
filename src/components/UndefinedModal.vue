@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { UndefinedItem } from '../composables/useUndefined'
+import type { UndefinedItem } from '@/types'
 
 const props = defineProps<{
   item: UndefinedItem

@@ -1,14 +1,6 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-
-export interface UndefinedItem {
-  uid: string
-  path: string
-  file_name: string
-  display_title: string
-  media_type: 'movie' | 'tv_shows'
-  year: number | null
-}
+import type { UndefinedItem } from '@/types'
 
 export function useUndefined() {
   const items = ref<UndefinedItem[]>([])
