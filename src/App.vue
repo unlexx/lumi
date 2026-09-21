@@ -324,7 +324,9 @@ function formatTime(seconds: number): string {
 function progressPercent(item: {
   position: number | null
   duration: number | null
+  watched: boolean
 }): number | null {
+  if (item.watched) return null
   if (!item.position || !item.duration || item.duration <= 0) return null
   const p = item.position / item.duration
   if (p <= 0.01) return null // едва начали — не показываем
@@ -365,10 +367,8 @@ async function resumeMovie(movie: VideoFile) {
 async function markMovieWatched(movie: VideoFile, watched: boolean) {
   await invoke('set_watched_bulk', { paths: [movie.path], watched })
   movie.watched = watched
-  if (!watched) {
-    movie.position = 0
-    movie.duration = 0
-  }
+  movie.position = 0
+  movie.duration = 0
   openMenuPath.value = null
   await loadContinueWatching()
 }
@@ -531,6 +531,15 @@ function matchUndefined(item: UndefinedItem) {
   selectedUndefined.value = null
   matchModalOpen.value = true
   searchMatch()
+}
+
+function showProgress(show: TvShow): number | null {
+  const total = episodesTotal(show)
+  if (total === 0) return null
+  const watched = episodesWatched(show)
+  if (watched === 0) return null // ничего не просмотрено — нет бара
+  if (watched === total) return null // всё просмотрено — нет бара (есть «✓»)
+  return watched / total
 }
 
 // === Клавиатура ===
@@ -722,6 +731,12 @@ onKeyStroke('Escape', () => {
                   ★ {{ show.tmdb.rating.toFixed(1) }}
                 </div>
                 <div v-if="isShowWatched(show)" class="watched-badge">✓</div>
+                <div v-if="showProgress(show) !== null" class="progress-bar">
+                  <div
+                    class="progress-fill"
+                    :style="{ width: showProgress(show)! * 100 + '%' }"
+                  ></div>
+                </div>
               </div>
               <button class="menu-btn" @click.stop="toggleMenu(show.title)">⋮</button>
               <div v-if="openMenuPath === show.title" class="context-menu" @click.stop>

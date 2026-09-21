@@ -199,8 +199,8 @@ pub fn set_watched_bulk(conn: &Connection, paths: &[String], watched: bool) -> S
         if watched {
             tx.execute(
                 "INSERT INTO watch_status (file_path, watched, position, duration, updated_at)
-                 VALUES (?1, 1, 0, 0, ?2)
-                 ON CONFLICT(file_path) DO UPDATE SET watched = 1",
+                VALUES (?1, 1, 0, 0, ?2)
+                ON CONFLICT(file_path) DO UPDATE SET watched = 1, position = 0, duration = 0",
                 rusqlite::params![path, now],
             )?;
         } else {
