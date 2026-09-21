@@ -1,124 +1,58 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
-import { onKeyStroke } from '@vueuse/core'
+import { invoke } from '@tauri-apps/api/core'
 import Settings from './views/Settings.vue'
 import { listen } from '@tauri-apps/api/event'
+import MediaGrid from './components/MediaGrid.vue'
+import UndefinedCard from './components/UndefinedCard.vue'
+import UndefinedModal from './components/UndefinedModal.vue'
+import type {
+  VideoFile,
+  TvShow,
+  TmdbSearchResult,
+  MatchResult,
+  UndefinedItem
+} from '@/types'
+import { useLibrary } from '@/composables/useLibrary'
+import { usePosters } from '@/composables/usePosters'
+import { usePlayer } from '@/composables/usePlayer'
+import { useWatched } from '@/composables/useWatched'
+import { useContinueWatching } from '@/composables/useContinueWatching'
+import { useKeyboard } from '@/composables/useKeyboard'
+import { useUndefined } from '@/composables/useUndefined'
+import MovieCard from '@/components/MovieCard.vue'
+import ShowCard from '@/components/ShowCard.vue'
+
+const { library, loading, error, scanProgress, refresh } = useLibrary()
+const { load: loadPosters } = usePosters(library)
+const { play } = usePlayer()
+const { continueWatching, load: loadContinueWatching } = useContinueWatching(library)
+const { markMovie, markShow } = useWatched(loadContinueWatching)
+const { items: undefinedItems, load: loadUndefined, remove: removeUndefined } = useUndefined()
 
 const currentView = ref<'library' | 'settings'>('library')
-const scanProgress = ref<{ current: number; total: number; folder: string } | null>(null)
-// === Интерфейсы ===
-
-interface ParsedVideo {
-  title: string
-  year: number | null
-  resolution: string | null
-  source: string | null
-  codec: string | null
-}
-
-interface TmdbInfo {
-  id: number
-  title: string
-  original_title: string | null
-  overview: string | null
-  poster_url: string | null
-  poster_local: string | null
-  rating: number | null
-}
-
-interface VideoFile {
-  path: string
-  name: string
-  extension: string
-  parsed: ParsedVideo
-  tmdb: TmdbInfo | null
-  media_type: 'movie' | 'tv_shows'
-  watched: boolean
-  position: number | null
-  duration: number | null
-}
-
-interface Episode {
-  number: number
-  path: string
-  name: string
-  parsed: ParsedVideo
-  watched: boolean
-  position: number | null
-  duration: number | null
-}
-
-interface Season {
-  number: number
-  episodes: Episode[]
-}
-
-interface TvShow {
-  title: string
-  year: number | null
-  seasons: Season[]
-  tmdb: TmdbInfo | null
-}
-
-interface Library {
-  movies: VideoFile[]
-  tv_shows: TvShow[]
-}
-
-interface ContinueItem {
-  path: string
-  title: string
-  poster_url: string | null
-  position: number
-  duration: number
-  progress: number
-  media_type: 'movie' | 'tv_shows'
-}
-
-interface TmdbSearchResult {
-  id: number
-  title: string
-  original_title: string | null
-  overview: string | null
-  poster_url: string | null
-  poster_data: string | null
-  year: number | null
-}
-// === Состояние ===
-
-const library = ref<Library>({ movies: [], tv_shows: [] })
-const loading = ref(true)
-const error = ref<string | null>(null)
 const selectedVideo = ref<VideoFile | null>(null)
 const selectedShow = ref<TvShow | null>(null)
-const continueWatching = ref<ContinueItem[]>([])
 const openMenuPath = ref<string | null>(null)
+
+useKeyboard({ currentView, selectedVideo, selectedShow, openMenuPath })
+
 const matchModalOpen = ref(false)
 const matchQuery = ref('')
 const matchResults = ref<TmdbSearchResult[]>([])
 const matchLoading = ref(false)
-const matchTarget = ref<{ path: string; media_type: 'movie' | 'tv_shows'; title: string } | null>(
-  null
-)
+const matchTarget = ref<{
+  path: string
+  media_type: 'movie' | 'tv_shows'
+  title: string
+  uid?: string
+} | null>(null)
 
-// === Загрузка ===
-
-async function refreshLibrary() {
-  loading.value = true
-  error.value = null
-  scanProgress.value = null
-  try {
-    library.value = await invoke<Library>('scan_all')
-    await loadPosters()
-    await loadContinueWatching()
-  } catch (e) {
-    error.value = String(e)
-    library.value = { movies: [], tv_shows: [] }
-  } finally {
-    loading.value = false
-    scanProgress.value = null
-  }
+async function refreshAll() {
+  await refresh()
+  await loadPosters()
+  await loadContinueWatching()
+  await loadUndefined()
 }
 
 onMounted(async () => {
@@ -137,7 +71,6 @@ onMounted(async () => {
       position: number
       duration: number
     }
-
     // Фильм?
     const movie = library.value.movies.find((m) => m.path === path)
     if (movie) {
@@ -145,7 +78,6 @@ onMounted(async () => {
       movie.position = position
       movie.duration = duration
     } else {
-      // Эпизод?
       for (const show of library.value.tv_shows) {
         for (const season of show.seasons) {
           const ep = season.episodes.find((e) => e.path === path)
@@ -158,57 +90,10 @@ onMounted(async () => {
         }
       }
     }
-
-    // Обновить секцию "Продолжить просмотр"
     await loadContinueWatching()
   })
-  refreshLibrary()
+  refreshAll()
 })
-
-async function loadPosters() {
-  for (const movie of library.value.movies) {
-    if (!movie.tmdb?.poster_url) continue
-    try {
-      const localPath = await invoke<string>('get_poster', {
-        tmdbId: movie.tmdb.id,
-        posterPath: extractPosterPath(movie.tmdb.poster_url)
-      })
-      movie.tmdb.poster_local = convertFileSrc(localPath)
-    } catch (e) {
-      console.error('Poster error for', movie.parsed.title, e)
-    }
-  }
-
-  for (const show of library.value.tv_shows) {
-    if (!show.tmdb?.poster_url) continue
-    try {
-      const localPath = await invoke<string>('get_poster', {
-        tmdbId: show.tmdb.id,
-        posterPath: extractPosterPath(show.tmdb.poster_url)
-      })
-      show.tmdb.poster_local = convertFileSrc(localPath)
-    } catch (e) {
-      console.error('Poster error for', show.title, e)
-    }
-  }
-}
-
-function extractPosterPath(url: string): string {
-  const marker = '/t/p/w500'
-  const idx = url.indexOf(marker)
-  return idx >= 0 ? url.slice(idx + marker.length) : url
-}
-
-// === Действия ===
-
-async function playVideo(path: string) {
-  try {
-    await invoke('play_video', { path })
-  } catch (e) {
-    console.error('Play error:', e)
-    error.value = String(e)
-  }
-}
 
 function openMovie(video: VideoFile) {
   selectedVideo.value = video
@@ -226,70 +111,6 @@ function closeShow() {
   selectedShow.value = null
 }
 
-function isShowWatched(show: TvShow): boolean {
-  const all = show.seasons.flatMap((s) => s.episodes)
-  return all.length > 0 && all.every((e) => e.watched)
-}
-
-async function resumeVideo(item: ContinueItem) {
-  try {
-    await invoke('play_video', {
-      path: item.path,
-      startPosition: item.position
-    })
-  } catch (e) {
-    console.error('Resume error:', e)
-    error.value = String(e)
-  }
-}
-
-async function loadContinueWatching() {
-  // Собираем все пути из библиотеки
-  const allPaths: string[] = [
-    ...library.value.movies.map((m) => m.path),
-    ...library.value.tv_shows.flatMap((s) =>
-      s.seasons.flatMap((se) => se.episodes.map((e) => e.path))
-    )
-  ]
-
-  const raw = await invoke<ContinueItem[]>('get_continue_watching', {
-    paths: allPaths
-  })
-
-  // Обогащаем: постер, красивое название, media_type
-  continueWatching.value = raw
-    .map((item) => {
-      // Фильм?
-      const movie = library.value.movies.find((m) => m.path === item.path)
-      if (movie) {
-        return {
-          ...item,
-          title: movie.tmdb?.title || movie.parsed.title,
-          poster_url: movie.tmdb?.poster_local || null,
-          media_type: 'movie' as const
-        }
-      }
-
-      // Эпизод?
-      for (const show of library.value.tv_shows) {
-        for (const season of show.seasons) {
-          const ep = season.episodes.find((e) => e.path === item.path)
-          if (ep) {
-            return {
-              ...item,
-              title: `${show.title} — S${String(season.number).padStart(2, '0')}E${String(ep.number).padStart(2, '0')}`,
-              poster_url: show.tmdb?.poster_local || null,
-              media_type: 'tv_shows' as const
-            }
-          }
-        }
-      }
-
-      return item
-    })
-    .filter((item) => item.poster_url || item.title)
-}
-
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return '0:00'
   const h = Math.floor(seconds / 3600)
@@ -301,116 +122,17 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-function progressPercent(item: {
-  position: number | null
-  duration: number | null
-}): number | null {
-  if (!item.position || !item.duration || item.duration <= 0) return null
-  const p = item.position / item.duration
-  if (p <= 0.01) return null // едва начали — не показываем
-  if (p >= 0.95) return null // досмотрели — тоже не показываем
-  return p
-}
-
-function episodesWatched(show: TvShow): number {
-  return show.seasons.flatMap((s) => s.episodes).filter((e) => e.watched).length
-}
-
-function episodesTotal(show: TvShow): number {
-  return show.seasons.flatMap((s) => s.episodes).length
-}
-
-function allEpisodesWatched(show: TvShow): boolean {
-  const total = episodesTotal(show)
-  return total > 0 && episodesWatched(show) === total
-}
-
 function toggleMenu(path: string) {
   openMenuPath.value = openMenuPath.value === path ? null : path
 }
 
-// === Меню фильма ===
-
-async function playMovieFromStart(movie: VideoFile) {
-  await invoke('play_video', { path: movie.path, startPosition: null })
-  openMenuPath.value = null
-}
-
-async function resumeMovie(movie: VideoFile) {
-  if (movie.position == null) return
-  await invoke('play_video', { path: movie.path, startPosition: movie.position })
-  openMenuPath.value = null
-}
-
-async function markMovieWatched(movie: VideoFile, watched: boolean) {
-  await invoke('set_watched_bulk', { paths: [movie.path], watched })
-  movie.watched = watched
-  if (!watched) {
-    movie.position = 0
-    movie.duration = 0
-  }
-  openMenuPath.value = null
-  await loadContinueWatching()
-}
-
-// === Меню сериала ===
-
-function firstEpisode(show: TvShow): Episode | null {
-  for (const season of show.seasons) {
-    if (season.episodes.length > 0) return season.episodes[0]
-  }
-  return null
-}
-
-function firstUnwatchedEpisode(show: TvShow): Episode | null {
-  for (const season of show.seasons) {
-    for (const ep of season.episodes) {
-      if (!ep.watched) return ep
-    }
-  }
-  return null
-}
-
-function episodeLabel(show: TvShow, ep: Episode): string {
-  const season = show.seasons.find((s) => s.episodes.includes(ep))
-  if (!season) return ''
-  return `S${String(season.number).padStart(2, '0')}E${String(ep.number).padStart(2, '0')}`
-}
-
-async function playShowFromStart(show: TvShow) {
-  const ep = firstEpisode(show)
-  if (!ep) return
-  await invoke('play_video', { path: ep.path, startPosition: null })
-  openMenuPath.value = null
-}
-
-async function resumeShow(show: TvShow) {
-  const ep = firstUnwatchedEpisode(show)
-  if (!ep) return
-  const startPosition = ep.position && ep.position > 0 ? ep.position : null
-  await invoke('play_video', { path: ep.path, startPosition })
-  openMenuPath.value = null
-}
-
-async function markShowWatched(show: TvShow, watched: boolean) {
-  const paths = show.seasons.flatMap((s) => s.episodes.map((e) => e.path))
-  if (paths.length === 0) return
-  await invoke('set_watched_bulk', { paths, watched })
-  for (const season of show.seasons) {
-    for (const ep of season.episodes) {
-      ep.watched = watched
-      if (!watched) {
-        ep.position = 0
-        ep.duration = 0
-      }
-    }
-  }
-  openMenuPath.value = null
-  await loadContinueWatching()
-}
-
-function openMatchModal(path: string, media_type: 'movie' | 'tv_shows', title: string) {
-  matchTarget.value = { path, media_type, title }
+function openMatchModal(
+  path: string,
+  media_type: 'movie' | 'tv_shows',
+  title: string,
+  uid: string
+) {
+  matchTarget.value = { path, media_type, title, uid }
   matchQuery.value = title
   matchResults.value = []
   matchModalOpen.value = true
@@ -453,98 +175,67 @@ async function searchMatch() {
 }
 
 async function applyMatch(result: TmdbSearchResult) {
-  if (!matchTarget.value) return
+  const target = matchTarget.value
+  if (!target) {
+    console.error('No match target set')
+    return
+  }
+
   try {
-    const newInfo = await invoke<{
-      tmdb_id: number
-      title: string
-      original_title: string | null
-      overview: string | null
-      poster_url: string | null
-      rating: number | null
-    }>('apply_tmdb_match', {
+    await invoke<MatchResult>('apply_tmdb_match', {
       tmdbId: result.id,
-      mediaType: matchTarget.value.media_type
+      mediaType: target.media_type,
+      uid: target.uid ?? null
     })
 
-    // Обновляем карточку локально
-    const target = matchTarget.value
-    if (target.media_type === 'movie') {
-      const movie = library.value.movies.find((m) => m.path === target.path)
-      if (movie) {
-        movie.tmdb = {
-          id: newInfo.tmdb_id,
-          title: newInfo.title,
-          original_title: newInfo.original_title,
-          overview: newInfo.overview,
-          poster_url: newInfo.poster_url,
-          poster_local: null,
-          rating: newInfo.rating
-        }
-        // Скачиваем новый постер
-        if (newInfo.poster_url) {
-          const localPath = await invoke<string>('get_poster', {
-            tmdbId: newInfo.tmdb_id,
-            posterPath: extractPosterPath(newInfo.poster_url)
-          })
-          movie.tmdb.poster_local = convertFileSrc(localPath)
-        }
-      }
-    } else {
-      // Для сериала — обновляем show.tmdb
-      const show = library.value.tv_shows.find((s) => s.title === target.title)
-      if (show) {
-        show.tmdb = {
-          id: newInfo.tmdb_id,
-          title: newInfo.title,
-          original_title: newInfo.original_title,
-          overview: newInfo.overview,
-          poster_url: newInfo.poster_url,
-          poster_local: null,
-          rating: newInfo.rating
-        }
-        show.title = newInfo.title
-        if (newInfo.poster_url) {
-          const localPath = await invoke<string>('get_poster', {
-            tmdbId: newInfo.tmdb_id,
-            posterPath: extractPosterPath(newInfo.poster_url)
-          })
-          show.tmdb.poster_local = convertFileSrc(localPath)
-        }
-      }
+    const uid = target.uid
+    if (uid) {
+      removeUndefined(uid)
     }
 
+    await refreshAll()
     closeMatchModal()
   } catch (e) {
-    console.error('Apply error:', e)
+    console.error('Apply match error:', e)
+    error.value = String(e)
   }
 }
-// === Клавиатура ===
 
-onKeyStroke('Backspace', (e) => {
-  if (currentView.value === 'settings') {
-    e.preventDefault()
-    currentView.value = 'library'
+const selectedUndefined = ref<UndefinedItem | null>(null)
+
+function openUndefined(item: UndefinedItem) {
+  selectedUndefined.value = item
+}
+
+function closeUndefined() {
+  selectedUndefined.value = null
+}
+
+function playUndefined(path: string) {
+  play(path)
+  selectedUndefined.value = null
+}
+
+function matchUndefined(item: UndefinedItem) {
+  matchTarget.value = {
+    path: item.path,
+    media_type: item.media_type,
+    title: item.display_title,
+    uid: item.uid
   }
-})
+  matchQuery.value = item.display_title
+  selectedUndefined.value = null
+  matchModalOpen.value = true
+  searchMatch()
+}
 
-onKeyStroke('F11', (e) => {
-  e.preventDefault()
-  invoke('toggle_fullscreen').catch(console.error)
-})
+function openMatchModalForMovie(movie: VideoFile) {
+  openMatchModal(movie.path, 'movie', movie.tmdb?.title || movie.parsed.title, movie.uid)
+}
 
-onKeyStroke('Escape', () => {
-  // Если открыта модалка — закрываем её, иначе выходим из полноэкранного
-  if (selectedVideo.value) {
-    selectedVideo.value = null
-  } else if (selectedShow.value) {
-    selectedShow.value = null
-  } else if (openMenuPath.value) {
-    openMenuPath.value = null
-  } else {
-    invoke('toggle_fullscreen').catch(console.error)
-  }
-})
+function openMatchModalForShow(show: TvShow) {
+  openMatchModal('', 'tv_shows', show.title, '')
+}
 </script>
 
 <template>
@@ -571,7 +262,7 @@ onKeyStroke('Escape', () => {
         <button
           v-if="currentView === 'library'"
           :disabled="loading"
-          @click="refreshLibrary"
+          @click="refreshAll"
           title="Обновить библиотеку"
         >
           ↻
@@ -599,7 +290,7 @@ onKeyStroke('Escape', () => {
               v-for="item in continueWatching"
               :key="item.path"
               class="continue-card"
-              @click="resumeVideo(item)"
+              @click="play(item.path, item.position)"
             >
               <div class="continue-poster-wrap">
                 <img
@@ -625,115 +316,44 @@ onKeyStroke('Escape', () => {
         <section v-if="library.movies.length" class="section">
           <h2>Фильмы</h2>
           <div class="grid">
-            <article
+            <MovieCard
               v-for="movie in library.movies"
               :key="movie.path"
-              class="card"
-              @click="openMovie(movie)"
-            >
-              <div class="poster-wrap">
-                <img
-                  v-if="movie.tmdb?.poster_local"
-                  :src="movie.tmdb.poster_local"
-                  :alt="movie.tmdb.title"
-                  class="poster"
-                  loading="lazy"
-                />
-                <div v-else class="poster placeholder">Нет постера</div>
-                <div v-if="movie.tmdb?.rating" class="rating">
-                  ★ {{ movie.tmdb.rating.toFixed(1) }}
-                </div>
-                <div v-if="movie.watched" class="watched-badge">✓</div>
-                <div v-if="progressPercent(movie) !== null" class="progress-bar">
-                  <div
-                    class="progress-fill"
-                    :style="{ width: progressPercent(movie)! * 100 + '%' }"
-                  ></div>
-                </div>
-                <button class="menu-btn" @click.stop="toggleMenu(movie.path)">⋮</button>
-                <div v-if="openMenuPath === movie.path" class="context-menu" @click.stop>
-                  <button @click="playMovieFromStart(movie)">Смотреть с начала</button>
-                  <button
-                    v-if="movie.position && movie.position > 0 && !movie.watched"
-                    @click="resumeMovie(movie)"
-                  >
-                    Продолжить с {{ formatTime(movie.position) }}
-                  </button>
-                  <button v-if="!movie.watched" @click="markMovieWatched(movie, true)">
-                    Пометить просмотренным
-                  </button>
-                  <button v-else @click="markMovieWatched(movie, false)">Непросмотренно</button>
-                  <button
-                    @click="
-                      openMatchModal(movie.path, 'movie', movie.tmdb?.title || movie.parsed.title)
-                    "
-                  >
-                    Сопоставить
-                  </button>
-                </div>
-              </div>
-              <div class="card-title">
-                {{ movie.tmdb?.title || movie.parsed.title }}
-              </div>
-              <div class="card-year">{{ movie.parsed.year || '' }}</div>
-            </article>
+              :movie="movie"
+              :menu-open="openMenuPath === movie.path"
+              @open="openMovie"
+              @play="play"
+              @match="openMatchModalForMovie"
+              @mark-watched="markMovie"
+              @toggle-menu="toggleMenu"
+            />
           </div>
         </section>
-
         <!-- Сериалы -->
         <section v-if="library.tv_shows.length" class="section">
           <h2>Сериалы</h2>
           <div class="grid">
-            <article
+            <ShowCard
               v-for="show in library.tv_shows"
               :key="show.title"
-              class="card"
-              @click="openShow(show)"
-            >
-              <div class="poster-wrap">
-                <img
-                  v-if="show.tmdb?.poster_local"
-                  :src="show.tmdb.poster_local"
-                  :alt="show.title"
-                  class="poster"
-                  loading="lazy"
-                />
-                <div v-else class="poster placeholder">Сериал</div>
-                <div v-if="show.tmdb?.rating" class="rating">
-                  ★ {{ show.tmdb.rating.toFixed(1) }}
-                </div>
-                <div v-if="isShowWatched(show)" class="watched-badge">✓</div>
-              </div>
-              <button class="menu-btn" @click.stop="toggleMenu(show.title)">⋮</button>
-              <div v-if="openMenuPath === show.title" class="context-menu" @click.stop>
-                <button @click="playShowFromStart(show)">Смотреть с начала</button>
-                <button v-if="firstUnwatchedEpisode(show)" @click="resumeShow(show)">
-                  Продолжить с {{ episodeLabel(show, firstUnwatchedEpisode(show)!) }}
-                </button>
-                <button v-if="!allEpisodesWatched(show)" @click="markShowWatched(show, true)">
-                  Пометить просмотренным
-                </button>
-                <button v-else @click="markShowWatched(show, false)">Непросмотренно</button>
-                <button @click="openMatchModal('', 'tv_shows', show.title)">Сопоставить</button>
-              </div>
-              <div class="card-title">{{ show.title }}</div>
-              <div class="card-year">
-                <template v-if="show.year">{{ show.year }} · </template>
-                <template v-if="allEpisodesWatched(show)">
-                  <span class="all-watched">✓ Все просмотрено</span>
-                </template>
-                <template v-else>
-                  <span v-if="episodesWatched(show) === 0"> {{ episodesTotal(show) }} сер. </span>
-                  <span v-else>
-                    Осталось {{ episodesTotal(show) - episodesWatched(show) }} из
-                    {{ episodesTotal(show) }}
-                  </span>
-                </template>
-              </div>
-            </article>
+              :show="show"
+              :menu-open="openMenuPath === show.title"
+              @open="openShow"
+              @play="play"
+              @match="openMatchModalForShow"
+              @mark-watched="markShow"
+              @toggle-menu="toggleMenu"
+            />
           </div>
         </section>
-
+        <section v-if="undefinedItems.length" class="section">
+          <h2>Неопределённое ({{ undefinedItems.length }})</h2>
+          <MediaGrid :items="undefinedItems">
+            <template #default="{ item }">
+              <UndefinedCard :item="item" @click="openUndefined" />
+            </template>
+          </MediaGrid>
+        </section>
         <p v-if="!error && !library.movies.length && !library.tv_shows.length" class="status">
           Библиотека пуста. Добавьте папки в настройках.
         </p>
@@ -741,8 +361,8 @@ onKeyStroke('Escape', () => {
     </div>
 
     <!-- Модалка фильма -->
-    <div v-if="selectedVideo" class="modal-backdrop" @click="closeMovie">
-      <div class="modal" @click.stop>
+    <div v-if="selectedVideo" class="modal-backdrop" @mousedown.self="closeMovie">
+      <div class="modal">
         <button class="close" @click="closeMovie">×</button>
         <div class="modal-content">
           <img
@@ -770,7 +390,7 @@ onKeyStroke('Escape', () => {
               <span v-if="selectedVideo.parsed.source">{{ selectedVideo.parsed.source }}</span>
               <span v-if="selectedVideo.parsed.codec">{{ selectedVideo.parsed.codec }}</span>
             </div>
-            <button class="play-btn" @click="playVideo(selectedVideo.path)">▶ Смотреть</button>
+            <button class="play-btn" @click="play(selectedVideo.path)">▶ Смотреть</button>
             <div class="file-path">{{ selectedVideo.name }}</div>
           </div>
         </div>
@@ -778,8 +398,8 @@ onKeyStroke('Escape', () => {
     </div>
 
     <!-- Модалка сериала -->
-    <div v-if="selectedShow" class="modal-backdrop" @click="closeShow">
-      <div class="modal" @click.stop>
+    <div v-if="selectedShow" class="modal-backdrop" @mousedown.self="closeShow">
+      <div class="modal">
         <button class="close" @click="closeShow">×</button>
         <h2>{{ selectedShow.title }}</h2>
         <div v-for="season in selectedShow.seasons" :key="season.number" class="season">
@@ -794,15 +414,15 @@ onKeyStroke('Escape', () => {
               <span class="ep-number">Серия {{ ep.number }}</span>
               <span class="ep-name">{{ ep.name }}</span>
               <span v-if="ep.watched" class="ep-watched">✓</span>
-              <button class="ep-play" @click="playVideo(ep.path)">▶</button>
+              <button class="ep-play" @click="play(ep.path)">▶</button>
             </li>
           </ul>
         </div>
       </div>
     </div>
   </main>
-  <div v-if="matchModalOpen" class="modal-backdrop" @click="closeMatchModal">
-    <div class="modal match-modal" @click.stop>
+  <div v-if="matchModalOpen" class="modal-backdrop" @mousedown.self="closeMatchModal">
+    <div class="modal match-modal">
       <button class="close" @click="closeMatchModal">×</button>
       <h2>Сопоставить с TMDB</h2>
 
@@ -851,6 +471,13 @@ onKeyStroke('Escape', () => {
       </p>
     </div>
   </div>
+  <UndefinedModal
+    v-if="selectedUndefined"
+    :item="selectedUndefined"
+    @close="closeUndefined"
+    @play="playUndefined"
+    @match="matchUndefined"
+  />
 </template>
 
 <style>
@@ -912,24 +539,6 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 1.25rem;
 }
-
-.card {
-  cursor: pointer;
-  transition: transform 0.15s ease;
-}
-
-.card:hover {
-  transform: translateY(-4px);
-}
-
-.poster-wrap {
-  position: relative;
-  aspect-ratio: 2 / 3;
-  border-radius: 8px;
-  overflow: visible;
-  background: #1e2127;
-}
-
 .poster {
   width: 100%;
   height: 100%;
@@ -937,40 +546,6 @@ body {
   display: block;
   border-radius: 8px;
 }
-
-.poster.placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-  font-size: 0.85rem;
-}
-
-.rating {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  background: rgba(0, 0, 0, 0.75);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  color: #ffd166;
-}
-
-.card-title {
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card-year {
-  font-size: 0.8rem;
-  color: #888;
-}
-
 /* Модалка */
 .modal-backdrop {
   position: fixed;
@@ -1072,7 +647,6 @@ body {
   border-radius: 6px;
   font-size: 1rem;
   cursor: pointer;
-  margin-top: 0.5rem;
 }
 
 .play-btn:hover {
@@ -1234,21 +808,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.watched-badge {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  background: rgba(74, 158, 255, 0.9);
-  color: #fff;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: bold;
-}
 .ep-watched {
   color: #4a9eff;
   font-weight: bold;
@@ -1313,84 +872,10 @@ body {
   height: 4px;
   background: rgba(0, 0, 0, 0.6);
 }
-
 .progress-fill {
   height: 100%;
   background: #4a9eff;
   transition: width 0.3s ease;
-}
-
-.all-watched {
-  color: #4a9eff;
-  font-weight: 500;
-}
-.menu-btn {
-  position: absolute;
-  bottom: 6px;
-  right: 6px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1rem;
-  line-height: 1;
-  opacity: 0;
-  transition:
-    opacity 0.15s ease,
-    background 0.15s ease;
-  z-index: 5;
-}
-
-.card:hover .menu-btn,
-.continue-card:hover .menu-btn {
-  opacity: 1;
-}
-
-.menu-btn:hover {
-  background: rgba(0, 0, 0, 0.9);
-}
-
-/* Рейтинг сдвигаем левее, чтобы не конфликтовал с «⋮» */
-.rating {
-  right: 6px;
-}
-
-.context-menu {
-  position: absolute;
-  bottom: 38px; /* было top: 38px */
-  right: 6px;
-  background: #1e2127;
-  border: 1px solid #3a3f47;
-  border-radius: 6px;
-  padding: 0.25rem 0;
-  min-width: 120px;
-  max-width: 240px;
-  z-index: 10;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-}
-
-.context-menu button {
-  display: block;
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: #e6e6e6;
-  text-align: left;
-  padding: 0.5rem 1rem;
-  cursor: pointer;
-  font-size: 0.85rem;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.context-menu button:hover {
-  background: #2a2e35;
 }
 
 .match-modal {

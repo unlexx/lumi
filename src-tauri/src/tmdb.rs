@@ -306,7 +306,11 @@ pub struct MatchResult {
 }
 
 #[tauri::command]
-pub async fn apply_tmdb_match(tmdb_id: u32, media_type: String) -> Result<MatchResult, String> {
+pub async fn apply_tmdb_match(
+    tmdb_id: u32,
+    media_type: String,
+    uid: Option<String>,
+) -> Result<MatchResult, String> {
     let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
     let client = build_client().map_err(|e| e.to_string())?;
 
@@ -351,6 +355,7 @@ pub async fn apply_tmdb_match(tmdb_id: u32, media_type: String) -> Result<MatchR
         .as_str()
         .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p));
 
+
     let result = MatchResult {
         tmdb_id,
         title,
@@ -360,8 +365,13 @@ pub async fn apply_tmdb_match(tmdb_id: u32, media_type: String) -> Result<MatchR
         rating: raw["vote_average"].as_f64(),
     };
 
-    // Сохраняем в кэш
-    cache::save_manual_match(&result, media_type.as_str())?;
+    // Если uid передан — обновляем media_items
+    if let Some(uid) = uid {
+        cache::save_manual_match_to_item(&result, &uid)?;
+    } else {
+        // Старое поведение — для совместимости (пока)
+        cache::save_manual_match(&result, media_type.as_str())?;
+    }
 
     Ok(result)
 }
