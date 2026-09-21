@@ -33,6 +33,7 @@ interface TmdbInfo {
 }
 
 interface VideoFile {
+  uid: string
   path: string
   name: string
   extension: string
@@ -428,8 +429,13 @@ async function markShowWatched(show: TvShow, watched: boolean) {
   await loadContinueWatching()
 }
 
-function openMatchModal(path: string, media_type: 'movie' | 'tv_shows', title: string) {
-  matchTarget.value = { path, media_type, title }
+function openMatchModal(
+  path: string,
+  media_type: 'movie' | 'tv_shows',
+  title: string,
+  uid: string
+) {
+  matchTarget.value = { path, media_type, title, uid }
   matchQuery.value = title
   matchResults.value = []
   matchModalOpen.value = true
@@ -482,7 +488,7 @@ async function applyMatch(result: TmdbSearchResult) {
     await invoke<MatchResult>('apply_tmdb_match', {
       tmdbId: result.id,
       mediaType: target.media_type,
-      uid: target.uid ?? null,
+      uid: target.uid ?? null
     })
 
     const uid = target.uid
@@ -673,7 +679,12 @@ onKeyStroke('Escape', () => {
                   <button v-else @click="markMovieWatched(movie, false)">Непросмотренно</button>
                   <button
                     @click="
-                      openMatchModal(movie.path, 'movie', movie.tmdb?.title || movie.parsed.title)
+                      openMatchModal(
+                        movie.path,
+                        'movie',
+                        movie.tmdb?.title || movie.parsed.title,
+                        movie.uid
+                      )
                     "
                   >
                     Сопоставить

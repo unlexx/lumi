@@ -1,13 +1,14 @@
 use crate::config::{load_folders, MediaType};
 use crate::parser::{parse_filename, ParsedVideo};
+use rusqlite::Connection;
 use serde::Serialize;
 use std::path::Path;
 use tauri::Emitter;
 use walkdir::WalkDir;
-use rusqlite::Connection;
 
 #[derive(Serialize, Clone)]
 pub struct VideoFile {
+    pub uid: String,
     pub path: String,
     pub name: String,
     pub extension: String,
@@ -33,15 +34,15 @@ pub struct TmdbInfo {
 
 #[derive(Serialize, Clone)]
 pub struct TvShow {
-    pub title: String, // "House of the Dragon"
+    pub title: String,
     pub year: Option<u32>,
     pub seasons: Vec<Season>,
-    pub tmdb: Option<TmdbInfo>, // для LUMI-9b
+    pub tmdb: Option<TmdbInfo>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct Season {
-    pub number: u32, // 3
+    pub number: u32,
     pub episodes: Vec<Episode>,
 }
 
@@ -86,8 +87,7 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     }
 
     let total_folders = folders.len();
-    let api_key = std::env::var("TMDB_API_KEY")
-        .map_err(|_| "TMDB_API_KEY not set in .env")?;
+    let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set in .env")?;
     let client = crate::tmdb::build_client().map_err(|e| e.to_string())?;
 
     let conn = crate::cache::init_db().map_err(|e| e.to_string())?;
@@ -213,13 +213,8 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
     crate::log_info!("=== TMDB lookup for {} new movies ===", new_movies.len());
 
     for item in new_movies {
-        match crate::tmdb::get_or_fetch(
-            &client,
-            &api_key,
-            &item.parsed_title,
-            item.parsed_year,
-        )
-        .await
+        match crate::tmdb::get_or_fetch(&client, &api_key, &item.parsed_title, item.parsed_year)
+            .await
         {
             Ok(Some(movie)) => {
                 let _ = crate::cache::update_tmdb(
@@ -253,7 +248,8 @@ pub async fn scan_all(app: tauri::AppHandle) -> Result<Library, String> {
 
     // Группируем по (parsed_title, year)
     use std::collections::HashMap;
-    let mut tv_groups: HashMap<(String, Option<u32>), Vec<&crate::cache::MediaItem>> = HashMap::new();
+    let mut tv_groups: HashMap<(String, Option<u32>), Vec<&crate::cache::MediaItem>> =
+        HashMap::new();
     for item in new_tv {
         let key = (item.parsed_title.to_lowercase(), item.parsed_year);
         tv_groups.entry(key).or_default().push(item);
@@ -362,9 +358,10 @@ fn media_item_to_video_file(item: &crate::cache::MediaItem, conn: &Connection) -
     });
 
     // watch info
-   let watch = crate::cache::get_watch_info(conn, &item.path);
+    let watch = crate::cache::get_watch_info(conn, &item.path);
 
     VideoFile {
+        uid: item.uid.clone(),
         path: item.path.clone(),
         name: item.name.clone(),
         extension: item.name.rsplit('.').next().unwrap_or("").to_string(),
