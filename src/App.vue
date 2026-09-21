@@ -4,6 +4,11 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { onKeyStroke } from '@vueuse/core'
 import Settings from './views/Settings.vue'
 import { listen } from '@tauri-apps/api/event'
+import MediaGrid from './components/MediaGrid.vue'
+import UndefinedCard from './components/UndefinedCard.vue'
+import UndefinedModal from './components/UndefinedModal.vue'
+import { useUndefined } from './composables/useUndefined'
+import type { UndefinedItem } from './composables/useUndefined'
 
 const currentView = ref<'library' | 'settings'>('library')
 const scanProgress = ref<{ current: number; total: number; folder: string } | null>(null)
@@ -112,6 +117,7 @@ async function refreshLibrary() {
     library.value = await invoke<Library>('scan_all')
     await loadPosters()
     await loadContinueWatching()
+    await loadUndefined()
   } catch (e) {
     error.value = String(e)
     library.value = { movies: [], tv_shows: [] }
@@ -519,6 +525,29 @@ async function applyMatch(result: TmdbSearchResult) {
     console.error('Apply error:', e)
   }
 }
+
+const { items: undefinedItems, load: loadUndefined } = useUndefined()
+const selectedUndefined = ref<UndefinedItem | null>(null)
+
+function openUndefined(item: UndefinedItem) {
+  selectedUndefined.value = item
+}
+
+function closeUndefined() {
+  selectedUndefined.value = null
+}
+
+function playUndefined(path: string) {
+  playVideo(path)
+  selectedUndefined.value = null
+}
+
+function matchUndefined(item: UndefinedItem) {
+  console.log('Match requested:', item)
+  // TODO: LUMI-21c — открыть модалку LUMI-19
+  selectedUndefined.value = null
+}
+
 // === Клавиатура ===
 
 onKeyStroke('Backspace', (e) => {
@@ -733,7 +762,14 @@ onKeyStroke('Escape', () => {
             </article>
           </div>
         </section>
-
+        <section v-if="undefinedItems.length" class="section">
+          <h2>Неопределённое ({{ undefinedItems.length }})</h2>
+          <MediaGrid :items="undefinedItems">
+            <template #default="{ item }">
+              <UndefinedCard :item="item" @click="openUndefined" />
+            </template>
+          </MediaGrid>
+        </section>
         <p v-if="!error && !library.movies.length && !library.tv_shows.length" class="status">
           Библиотека пуста. Добавьте папки в настройках.
         </p>
@@ -851,6 +887,13 @@ onKeyStroke('Escape', () => {
       </p>
     </div>
   </div>
+  <UndefinedModal
+    v-if="selectedUndefined"
+    :item="selectedUndefined"
+    @close="closeUndefined"
+    @play="playUndefined"
+    @match="matchUndefined"
+  />
 </template>
 
 <style>

@@ -458,3 +458,33 @@ fn build_tv_shows(items: &[crate::cache::MediaItem], conn: &Connection) -> Vec<T
     shows.sort_by(|a, b| a.title.cmp(&b.title));
     shows
 }
+
+#[derive(Serialize)]
+pub struct UndefinedItem {
+    pub uid: String,
+    pub path: String,
+    pub file_name: String,
+    pub display_title: String,
+    pub media_type: String,
+    pub year: Option<u32>,
+}
+
+#[tauri::command]
+pub fn get_undefined_items() -> Vec<UndefinedItem> {
+    let conn = match crate::cache::init_db() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    crate::cache::get_undefined(&conn)
+        .into_iter()
+        .map(|i| UndefinedItem {
+            uid: i.uid,
+            path: i.path,
+            file_name: i.name,
+            display_title: i.parsed_title,
+            media_type: i.media_type,
+            year: i.parsed_year,
+        })
+        .collect()
+}

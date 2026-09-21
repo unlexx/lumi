@@ -316,7 +316,7 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.media_type,
             item.tmdb_id,
             item.title,
-            item.original_title,   // ← добавили
+            item.original_title, // ← добавили
             item.overview,
             item.poster_path,
             item.rating,
@@ -414,7 +414,7 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
 
 pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
-        "SELECT uid, path, name, media_type, tmdb_id, title, get_undefined, overview, poster_path,
+        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
                 scanned_at, updated_at
          FROM media_items

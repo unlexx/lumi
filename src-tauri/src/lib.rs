@@ -1,13 +1,13 @@
 use tauri::Manager;
 mod cache;
 mod config;
+mod logger;
 mod mpv;
 mod parser;
 mod player;
 mod scanner;
 mod tmdb;
 mod tv_parser;
-mod logger;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -25,14 +25,15 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            scanner::scan_all,
-            tmdb::get_poster,
             player::play_video,
             config::get_folders,
             config::add_folder,
             config::remove_folder,
             scanner::get_continue_watching,
             scanner::set_watched_bulk,
+            scanner::scan_all,
+            scanner::get_undefined_items,
+            tmdb::get_poster,
             tmdb::search_tmdb_manual,
             tmdb::apply_tmdb_match,
             tmdb::fetch_poster_preview,
