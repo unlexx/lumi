@@ -9,7 +9,6 @@ import UndefinedModal from './components/UndefinedModal.vue'
 import type {
   VideoFile,
   TvShow,
-  Episode,
   TmdbSearchResult,
   MatchResult,
   UndefinedItem
