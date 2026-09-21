@@ -458,3 +458,34 @@ fn now_ts() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+pub fn save_manual_match_to_item(result: &MatchResult, uid: &str) -> Result<(), String> {
+    let conn = init_db().map_err(|e| e.to_string())?;
+    let now = now_ts();
+
+    let poster_path = result
+        .poster_url
+        .as_ref()
+        .and_then(|url| url.split("/t/p/w500").nth(1))
+        .map(|s| s.to_string());
+
+    conn.execute(
+        "UPDATE media_items
+         SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
+             poster_path = ?5, rating = ?6, updated_at = ?7
+         WHERE uid = ?8",
+        rusqlite::params![
+            result.tmdb_id,
+            result.title,
+            result.original_title,
+            result.overview,
+            poster_path,
+            result.rating,
+            now,
+            uid,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}

@@ -90,6 +90,16 @@ interface TmdbSearchResult {
   poster_data: string | null
   year: number | null
 }
+
+interface MatchResult {
+  tmdb_id: number
+  title: string
+  original_title: string | null
+  overview: string | null
+  poster_url: string | null
+  rating: number | null
+}
+
 // === Состояние ===
 
 const library = ref<Library>({ movies: [], tv_shows: [] })
@@ -103,9 +113,12 @@ const matchModalOpen = ref(false)
 const matchQuery = ref('')
 const matchResults = ref<TmdbSearchResult[]>([])
 const matchLoading = ref(false)
-const matchTarget = ref<{ path: string; media_type: 'movie' | 'tv_shows'; title: string } | null>(
-  null
-)
+const matchTarget = ref<{
+  path: string
+  media_type: 'movie' | 'tv_shows'
+  title: string
+  uid?: string
+} | null>(null)
 
 // === Загрузка ===
 
@@ -459,74 +472,33 @@ async function searchMatch() {
 }
 
 async function applyMatch(result: TmdbSearchResult) {
-  if (!matchTarget.value) return
+  const target = matchTarget.value
+  if (!target) {
+    console.error('No match target set')
+    return
+  }
+
   try {
-    const newInfo = await invoke<{
-      tmdb_id: number
-      title: string
-      original_title: string | null
-      overview: string | null
-      poster_url: string | null
-      rating: number | null
-    }>('apply_tmdb_match', {
+    await invoke<MatchResult>('apply_tmdb_match', {
       tmdbId: result.id,
-      mediaType: matchTarget.value.media_type
+      mediaType: target.media_type,
+      uid: target.uid ?? null,
     })
 
-    // Обновляем карточку локально
-    const target = matchTarget.value
-    if (target.media_type === 'movie') {
-      const movie = library.value.movies.find((m) => m.path === target.path)
-      if (movie) {
-        movie.tmdb = {
-          id: newInfo.tmdb_id,
-          title: newInfo.title,
-          original_title: newInfo.original_title,
-          overview: newInfo.overview,
-          poster_url: newInfo.poster_url,
-          poster_local: null,
-          rating: newInfo.rating
-        }
-        // Скачиваем новый постер
-        if (newInfo.poster_url) {
-          const localPath = await invoke<string>('get_poster', {
-            tmdbId: newInfo.tmdb_id,
-            posterPath: extractPosterPath(newInfo.poster_url)
-          })
-          movie.tmdb.poster_local = convertFileSrc(localPath)
-        }
-      }
-    } else {
-      // Для сериала — обновляем show.tmdb
-      const show = library.value.tv_shows.find((s) => s.title === target.title)
-      if (show) {
-        show.tmdb = {
-          id: newInfo.tmdb_id,
-          title: newInfo.title,
-          original_title: newInfo.original_title,
-          overview: newInfo.overview,
-          poster_url: newInfo.poster_url,
-          poster_local: null,
-          rating: newInfo.rating
-        }
-        show.title = newInfo.title
-        if (newInfo.poster_url) {
-          const localPath = await invoke<string>('get_poster', {
-            tmdbId: newInfo.tmdb_id,
-            posterPath: extractPosterPath(newInfo.poster_url)
-          })
-          show.tmdb.poster_local = convertFileSrc(localPath)
-        }
-      }
+    const uid = target.uid
+    if (uid) {
+      removeUndefined(uid)
     }
 
+    await refreshLibrary()
     closeMatchModal()
   } catch (e) {
-    console.error('Apply error:', e)
+    console.error('Apply match error:', e)
+    error.value = String(e)
   }
 }
 
-const { items: undefinedItems, load: loadUndefined } = useUndefined()
+const { items: undefinedItems, load: loadUndefined, remove: removeUndefined } = useUndefined()
 const selectedUndefined = ref<UndefinedItem | null>(null)
 
 function openUndefined(item: UndefinedItem) {
@@ -543,9 +515,16 @@ function playUndefined(path: string) {
 }
 
 function matchUndefined(item: UndefinedItem) {
-  console.log('Match requested:', item)
-  // TODO: LUMI-21c — открыть модалку LUMI-19
+  matchTarget.value = {
+    path: item.path,
+    media_type: item.media_type,
+    title: item.display_title,
+    uid: item.uid
+  }
+  matchQuery.value = item.display_title
   selectedUndefined.value = null
+  matchModalOpen.value = true
+  searchMatch()
 }
 
 // === Клавиатура ===
@@ -1115,7 +1094,6 @@ body {
   border-radius: 6px;
   font-size: 1rem;
   cursor: pointer;
-  margin-top: 0.5rem;
 }
 
 .play-btn:hover {
