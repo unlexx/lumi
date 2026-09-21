@@ -33,6 +33,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 directories = "5"
 interprocess = "2.2"
 base64 = "0.22"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1

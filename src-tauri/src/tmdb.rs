@@ -196,49 +196,15 @@ fn pick_best_show(mut results: Vec<TmdbShow>, year: Option<u32>) -> Option<TmdbS
     results.into_iter().next()
 }
 
-/// Главная точка входа: сначала проверяет кэш, потом идёт в TMDB,
-/// результат сохраняет в кэш.
 pub async fn get_or_fetch(
     client: &Client,
     api_key: &str,
     title: &str,
     year: Option<u32>,
 ) -> Result<Option<TmdbMovie>, String> {
-    // 1. Проверяем кэш
-    {
-        let conn = cache::init_db().map_err(|e| e.to_string())?;
-        if let Some(cached) = cache::find_cached(&conn, title) {
-            crate::log_info!("  → Cache HIT: {}", cached.title);
-            return Ok(Some(TmdbMovie {
-                id: cached.tmdb_id,
-                title: cached.title,
-                original_title: cached.original_title,
-                overview: cached.overview,
-                poster_path: cached.poster_path,
-                vote_average: cached.rating,
-                release_date: cached.release_date,
-            }));
-        }
-    }
-
-    // 2. Идём в TMDB
-    crate::log_info!(
-        "  → Cache MISS, fetching from TMDB: '{}' ({:?})",
-        title,
-        year
-    );
-    let result = search_movie(client, api_key, title, year).await?;
-
-    // 3. Сохраняем в кэш
-    if let Some(ref movie) = result {
-        if let Ok(conn) = cache::init_db() {
-            let _ = cache::save_movie(&conn, movie);
-        }
-    } else {
-        crate::log_info!("  → No results for '{}'", title);
-    }
-
-    Ok(result)
+    // Убрать проверку кэша, оставить только TMDB
+    crate::log_info!("  → TMDB lookup: '{}' ({:?})", title, year);
+    search_movie(client, api_key, title, year).await
 }
 
 pub async fn get_or_fetch_tv(
@@ -247,41 +213,8 @@ pub async fn get_or_fetch_tv(
     title: &str,
     year: Option<u32>,
 ) -> Result<Option<TmdbShow>, String> {
-    // 1. Проверяем кэш
-    {
-        let conn = cache::init_db().map_err(|e| e.to_string())?;
-        if let Some(cached) = cache::find_cached_tv(&conn, title) {
-            crate::log_info!("  → TV Cache HIT: {}", cached.name);
-            return Ok(Some(TmdbShow {
-                id: cached.tmdb_id,
-                name: cached.name,
-                original_name: cached.original_name,
-                overview: cached.overview,
-                poster_path: cached.poster_path,
-                vote_average: cached.rating,
-                first_air_date: cached.first_air_date,
-            }));
-        }
-    }
-
-    // 2. Идём в TMDB
-    crate::log_info!(
-        "  → TV Cache MISS, fetching from TMDB: '{}' ({:?})",
-        title,
-        year
-    );
-    let result = search_tv(client, api_key, title, year).await?;
-
-    // 3. Сохраняем
-    if let Some(ref show) = result {
-        if let Ok(conn) = cache::init_db() {
-            let _ = cache::save_tv_show(&conn, show);
-        }
-    } else {
-        crate::log_info!("  → No TV results for '{}'", title);
-    }
-
-    Ok(result)
+    crate::log_info!("  → TMDB TV lookup: '{}' ({:?})", title, year);
+    search_tv(client, api_key, title, year).await
 }
 
 #[tauri::command]

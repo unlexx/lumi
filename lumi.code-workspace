@@ -20,6 +20,8 @@
       "editor.defaultFormatter": "rust-lang.rust-analyzer",
       "editor.formatOnSave": true
     },
-    "git.branchPrefix": "feature/LUMI-"
+    "git.branchPrefix": "feature/LUMI-",
+    "git.autofetch": true,
+    "git.fetchOnPull": true
   }
 }
