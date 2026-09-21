@@ -25,8 +25,8 @@ function match() {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click="close">
-    <div class="modal" @click.stop>
+  <div class="modal-backdrop" @mousedown.self="close">
+    <div class="modal">
       <button class="close" @click="close">×</button>
       <h2>{{ item.display_title }}</h2>
       <p class="file-name">{{ item.file_name }}</p>

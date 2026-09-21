@@ -733,7 +733,7 @@ onKeyStroke('Escape', () => {
                   Пометить просмотренным
                 </button>
                 <button v-else @click="markShowWatched(show, false)">Непросмотренно</button>
-                <button @click="openMatchModal('', 'tv_shows', show.title)">Сопоставить</button>
+                <button @click="openMatchModal('', 'tv_shows', show.title, '')">Сопоставить</button>
               </div>
               <div class="card-title">{{ show.title }}</div>
               <div class="card-year">
@@ -767,8 +767,8 @@ onKeyStroke('Escape', () => {
     </div>
 
     <!-- Модалка фильма -->
-    <div v-if="selectedVideo" class="modal-backdrop" @click="closeMovie">
-      <div class="modal" @click.stop>
+    <div v-if="selectedVideo" class="modal-backdrop" @mousedown.self="closeMovie">
+      <div class="modal">
         <button class="close" @click="closeMovie">×</button>
         <div class="modal-content">
           <img
@@ -804,8 +804,8 @@ onKeyStroke('Escape', () => {
     </div>
 
     <!-- Модалка сериала -->
-    <div v-if="selectedShow" class="modal-backdrop" @click="closeShow">
-      <div class="modal" @click.stop>
+    <div v-if="selectedShow" class="modal-backdrop" @mousedown.self="closeShow">
+      <div class="modal">
         <button class="close" @click="closeShow">×</button>
         <h2>{{ selectedShow.title }}</h2>
         <div v-for="season in selectedShow.seasons" :key="season.number" class="season">
@@ -827,8 +827,8 @@ onKeyStroke('Escape', () => {
       </div>
     </div>
   </main>
-  <div v-if="matchModalOpen" class="modal-backdrop" @click="closeMatchModal">
-    <div class="modal match-modal" @click.stop>
+  <div v-if="matchModalOpen" class="modal-backdrop" @mousedown.self="closeMatchModal">
+    <div class="modal match-modal">
       <button class="close" @click="closeMatchModal">×</button>
       <h2>Сопоставить с TMDB</h2>
 
