@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { TvShow, Episode } from '@/types'
 import MediaPoster from './MediaPoster.vue'
+import ContextMenu from './ContextMenu.vue'
 
 const props = defineProps<{
   show: TvShow
-  menuOpen: boolean
 }>()
 
 const emit = defineEmits<{
@@ -13,10 +12,7 @@ const emit = defineEmits<{
   (e: 'play', path: string, startPosition: number | null): void
   (e: 'match', show: TvShow): void
   (e: 'mark-watched', show: TvShow, watched: boolean): void
-  (e: 'toggle-menu', key: string): void
 }>()
-
-const menuKey = computed(() => props.show.title)
 
 function episodesWatched(): number {
   return props.show.seasons.flatMap((s) => s.episodes).filter((e) => e.watched).length
@@ -61,31 +57,6 @@ function episodeLabel(ep: Episode): string {
   if (!season) return ''
   return `S${String(season.number).padStart(2, '0')}E${String(ep.number).padStart(2, '0')}`
 }
-
-function handlePlayFromStart() {
-  const ep = firstEpisode()
-  if (!ep) return
-  emit('play', ep.path, null)
-  emit('toggle-menu', menuKey.value)
-}
-
-function handleResume() {
-  const ep = firstUnwatchedEpisode()
-  if (!ep) return
-  const startPosition = ep.position && ep.position > 0 ? ep.position : null
-  emit('play', ep.path, startPosition)
-  emit('toggle-menu', menuKey.value)
-}
-
-function handleMarkWatched() {
-  emit('mark-watched', props.show, !allWatched())
-  emit('toggle-menu', menuKey.value)
-}
-
-function handleMatch() {
-  emit('match', props.show)
-  emit('toggle-menu', menuKey.value)
-}
 </script>
 
 <template>
@@ -99,16 +70,68 @@ function handleMatch() {
       placeholder="Сериал"
     >
       <template #overlay>
-        <button class="menu-btn" @click.stop="emit('toggle-menu', menuKey)">⋮</button>
-        <div v-if="menuOpen" class="context-menu" @click.stop>
-          <button @click="handlePlayFromStart">Смотреть с начала</button>
-          <button v-if="firstUnwatchedEpisode()" @click="handleResume">
-            Продолжить с {{ episodeLabel(firstUnwatchedEpisode()!) }}
-          </button>
-          <button v-if="!allWatched()" @click="handleMarkWatched">Пометить просмотренным</button>
-          <button v-else @click="handleMarkWatched">Непросмотренно</button>
-          <button @click="handleMatch">Сопоставить</button>
-        </div>
+        <ContextMenu>
+          <template #trigger="{ toggle }">
+            <button class="menu-btn" @click.stop="toggle">⋮</button>
+          </template>
+          <template #menu="{ close }">
+            <button
+              @click="
+                () => {
+                  const ep = firstEpisode()
+                  if (ep) emit('play', ep.path, null)
+                  close()
+                }
+              "
+            >
+              Смотреть с начала
+            </button>
+            <button
+              v-if="firstUnwatchedEpisode()"
+              @click="
+                () => {
+                  const ep = firstUnwatchedEpisode()!
+                  emit('play', ep.path, ep.position && ep.position > 0 ? ep.position : null)
+                  close()
+                }
+              "
+            >
+              Продолжить с {{ episodeLabel(firstUnwatchedEpisode()!) }}
+            </button>
+            <button
+              v-if="!allWatched()"
+              @click="
+                () => {
+                  emit('mark-watched', show, true)
+                  close()
+                }
+              "
+            >
+              Пометить просмотренным
+            </button>
+            <button
+              v-else
+              @click="
+                () => {
+                  emit('mark-watched', show, false)
+                  close()
+                }
+              "
+            >
+              Непросмотренно
+            </button>
+            <button
+              @click="
+                () => {
+                  emit('match', show)
+                  close()
+                }
+              "
+            >
+              Сопоставить
+            </button>
+          </template>
+        </ContextMenu>
       </template>
     </MediaPoster>
 
@@ -186,37 +209,5 @@ function handleMatch() {
 
 .menu-btn:hover {
   background: rgba(0, 0, 0, 0.9);
-}
-
-.context-menu {
-  position: absolute;
-  bottom: 38px;
-  right: 6px;
-  background: #1e2127;
-  border: 1px solid #3a3f47;
-  border-radius: 6px;
-  padding: 0.25rem 0;
-  min-width: 120px;
-  max-width: 240px;
-  z-index: 10;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-}
-
-.context-menu button {
-  display: block;
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: #e6e6e6;
-  text-align: left;
-  padding: 0.5rem 1rem;
-  cursor: pointer;
-  font-size: 0.85rem;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.context-menu button:hover {
-  background: #2a2e35;
 }
 </style>

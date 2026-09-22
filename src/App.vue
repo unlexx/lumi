@@ -6,13 +6,7 @@ import { listen } from '@tauri-apps/api/event'
 import MediaGrid from './components/MediaGrid.vue'
 import UndefinedCard from './components/UndefinedCard.vue'
 import UndefinedModal from './components/UndefinedModal.vue'
-import type {
-  VideoFile,
-  TvShow,
-  TmdbSearchResult,
-  MatchResult,
-  UndefinedItem
-} from '@/types'
+import type { VideoFile, TvShow, TmdbSearchResult, MatchResult, UndefinedItem } from '@/types'
 import { useLibrary } from '@/composables/useLibrary'
 import { usePosters } from '@/composables/usePosters'
 import { usePlayer } from '@/composables/usePlayer'
@@ -35,7 +29,7 @@ const selectedVideo = ref<VideoFile | null>(null)
 const selectedShow = ref<TvShow | null>(null)
 const openMenuPath = ref<string | null>(null)
 
-useKeyboard({ currentView, selectedVideo, selectedShow, openMenuPath })
+useKeyboard({ currentView, selectedVideo, selectedShow })
 
 const matchModalOpen = ref(false)
 const matchQuery = ref('')
@@ -120,10 +114,6 @@ function formatTime(seconds: number): string {
     return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
   }
   return `${m}:${String(s).padStart(2, '0')}`
-}
-
-function toggleMenu(path: string) {
-  openMenuPath.value = openMenuPath.value === path ? null : path
 }
 
 function openMatchModal(
@@ -239,7 +229,7 @@ function openMatchModalForShow(show: TvShow) {
 </script>
 
 <template>
-  <main class="app" @click="openMenuPath = null">
+  <main class="app">
     <header class="toolbar">
       <div class="header-left">
         <button
@@ -320,12 +310,10 @@ function openMatchModalForShow(show: TvShow) {
               v-for="movie in library.movies"
               :key="movie.path"
               :movie="movie"
-              :menu-open="openMenuPath === movie.path"
               @open="openMovie"
               @play="play"
               @match="openMatchModalForMovie"
               @mark-watched="markMovie"
-              @toggle-menu="toggleMenu"
             />
           </div>
         </section>
@@ -337,12 +325,10 @@ function openMatchModalForShow(show: TvShow) {
               v-for="show in library.tv_shows"
               :key="show.title"
               :show="show"
-              :menu-open="openMenuPath === show.title"
               @open="openShow"
               @play="play"
               @match="openMatchModalForShow"
               @mark-watched="markShow"
-              @toggle-menu="toggleMenu"
             />
           </div>
         </section>
