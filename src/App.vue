@@ -17,6 +17,7 @@ import { useUndefined } from '@/composables/useUndefined'
 import MovieCard from '@/components/MovieCard.vue'
 import ShowCard from '@/components/ShowCard.vue'
 import MatchModal from './components/MatchModal.vue'
+import MovieModal from './components/MovieModal.vue'
 
 const { library, loading, error, scanProgress, refresh } = useLibrary()
 const { load: loadPosters } = usePosters(library)
@@ -310,41 +311,7 @@ function playUndefined(path: string) {
     </div>
 
     <!-- Модалка фильма -->
-    <div v-if="selectedVideo" class="modal-backdrop" @mousedown.self="closeMovie">
-      <div class="modal">
-        <button class="close" @click="closeMovie">×</button>
-        <div class="modal-content">
-          <img
-            v-if="selectedVideo.tmdb?.poster_local"
-            :src="selectedVideo.tmdb.poster_local"
-            class="modal-poster"
-          />
-          <div class="modal-info">
-            <h2>
-              {{ selectedVideo.tmdb?.title || selectedVideo.parsed.title }}
-              <span v-if="selectedVideo.parsed.year" class="year">
-                ({{ selectedVideo.parsed.year }})
-              </span>
-            </h2>
-            <div v-if="selectedVideo.tmdb?.rating" class="modal-rating">
-              ★ {{ selectedVideo.tmdb.rating.toFixed(1) }}
-            </div>
-            <p v-if="selectedVideo.tmdb?.overview" class="overview">
-              {{ selectedVideo.tmdb.overview }}
-            </p>
-            <div class="tags">
-              <span v-if="selectedVideo.parsed.resolution">{{
-                selectedVideo.parsed.resolution
-              }}</span>
-              <span v-if="selectedVideo.parsed.source">{{ selectedVideo.parsed.source }}</span>
-              <span v-if="selectedVideo.parsed.codec">{{ selectedVideo.parsed.codec }}</span>
-            </div>
-            <button class="play-btn" @click="play(selectedVideo.path)">▶ Смотреть</button>
-            <div class="file-path">{{ selectedVideo.name }}</div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <MovieModal v-if="selectedVideo" :movie="selectedVideo" @close="closeMovie" @play="play" />
 
     <!-- Модалка сериала -->
     <div v-if="selectedShow" class="modal-backdrop" @mousedown.self="closeShow">
@@ -485,81 +452,6 @@ body {
   color: #fff;
 }
 
-.modal-content {
-  display: flex;
-  gap: 1.5rem;
-  align-items: flex-start;
-}
-
-.modal-poster {
-  width: 240px;
-  height: auto;
-  border-radius: 8px;
-  flex-shrink: 0;
-  object-fit: contain;
-}
-
-.modal-info {
-  flex: 1;
-}
-
-.modal-info h2 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.4rem;
-}
-
-.year {
-  color: #888;
-  font-weight: 400;
-}
-
-.modal-rating {
-  color: #ffd166;
-  margin-bottom: 0.75rem;
-}
-
-.overview {
-  color: #bbb;
-  line-height: 1.5;
-  margin: 0.75rem 0;
-  font-size: 1.2rem;
-}
-
-.tags {
-  display: flex;
-  gap: 0.5rem;
-  margin: 1rem 0;
-}
-
-.tags span {
-  background: #2a2e35;
-  padding: 0.25rem 0.6rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  color: #aaa;
-}
-
-.play-btn {
-  background: #4a9eff;
-  color: #fff;
-  border: none;
-  padding: 0.6rem 1.5rem;
-  border-radius: 6px;
-  font-size: 1rem;
-  cursor: pointer;
-}
-
-.play-btn:hover {
-  background: #3a8eef;
-}
-
-.file-path {
-  margin-top: 1rem;
-  font-size: 0.75rem;
-  color: #666;
-  font-family: monospace;
-  word-break: break-all;
-}
 .tabs {
   display: flex;
   gap: 0.5rem;
