@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { VideoFile } from '@/types'
 import MediaPoster from './MediaPoster.vue'
+import ContextMenu from './ContextMenu.vue'
 
 const props = defineProps<{
   movie: VideoFile
-  menuOpen: boolean
 }>()
 
 const emit = defineEmits<{
@@ -12,7 +12,6 @@ const emit = defineEmits<{
   (e: 'play', path: string, startPosition: number | null): void
   (e: 'match', movie: VideoFile): void
   (e: 'mark-watched', movie: VideoFile, watched: boolean): void
-  (e: 'toggle-menu', path: string): void
 }>()
 
 function progressPercent(): number | null {
@@ -36,26 +35,6 @@ function formatTime(seconds: number): string {
   }
   return `${m}:${String(s).padStart(2, '0')}`
 }
-
-function handlePlayFromStart() {
-  emit('play', props.movie.path, null)
-  emit('toggle-menu', props.movie.path)
-}
-
-function handleResume() {
-  emit('play', props.movie.path, props.movie.position)
-  emit('toggle-menu', props.movie.path)
-}
-
-function handleMarkWatched() {
-  emit('mark-watched', props.movie, !props.movie.watched)
-  emit('toggle-menu', props.movie.path)
-}
-
-function handleMatch() {
-  emit('match', props.movie)
-  emit('toggle-menu', props.movie.path)
-}
 </script>
 
 <template>
@@ -69,21 +48,66 @@ function handleMatch() {
       placeholder="Нет постера"
     >
       <template #overlay>
-        <button class="menu-btn" @click.stop="emit('toggle-menu', movie.path)">⋮</button>
-        <div v-if="menuOpen" class="context-menu" @click.stop>
-          <button @click="handlePlayFromStart">Смотреть с начала</button>
-          <button
-            v-if="movie.position && movie.position > 0 && !movie.watched"
-            @click="handleResume"
-          >
-            Продолжить с {{ formatTime(movie.position) }}
-          </button>
-          <button v-if="!movie.watched" @click="handleMarkWatched">
-            Пометить просмотренным
-          </button>
-          <button v-else @click="handleMarkWatched">Непросмотренно</button>
-          <button @click="handleMatch">Сопоставить</button>
-        </div>
+        <ContextMenu>
+          <template #trigger="{ toggle }">
+            <button class="menu-btn" @click.stop="toggle">⋮</button>
+          </template>
+          <template #menu="{ close }">
+            <button
+              @click="
+                () => {
+                  emit('play', movie.path, null)
+                  close()
+                }
+              "
+            >
+              Смотреть с начала
+            </button>
+            <button
+              v-if="movie.position && movie.position > 0 && !movie.watched"
+              @click="
+                () => {
+                  emit('play', movie.path, movie.position)
+                  close()
+                }
+              "
+            >
+              Продолжить с {{ formatTime(movie.position!) }}
+            </button>
+            <button
+              v-if="!movie.watched"
+              @click="
+                () => {
+                  emit('mark-watched', movie, true)
+                  close()
+                }
+              "
+            >
+              Пометить просмотренным
+            </button>
+            <button
+              v-else
+              @click="
+                () => {
+                  emit('mark-watched', movie, false)
+                  close()
+                }
+              "
+            >
+              Непросмотренно
+            </button>
+            <button
+              @click="
+                () => {
+                  emit('match', movie)
+                  close()
+                }
+              "
+            >
+              Сопоставить
+            </button>
+          </template>
+        </ContextMenu>
       </template>
     </MediaPoster>
 
@@ -145,37 +169,5 @@ function handleMatch() {
 
 .menu-btn:hover {
   background: rgba(0, 0, 0, 0.9);
-}
-
-.context-menu {
-  position: absolute;
-  bottom: 38px;
-  right: 6px;
-  background: #1e2127;
-  border: 1px solid #3a3f47;
-  border-radius: 6px;
-  padding: 0.25rem 0;
-  min-width: 120px;
-  max-width: 240px;
-  z-index: 10;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-}
-
-.context-menu button {
-  display: block;
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: #e6e6e6;
-  text-align: left;
-  padding: 0.5rem 1rem;
-  cursor: pointer;
-  font-size: 0.85rem;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.context-menu button:hover {
-  background: #2a2e35;
 }
 </style>
