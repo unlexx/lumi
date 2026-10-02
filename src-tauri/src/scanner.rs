@@ -338,7 +338,7 @@ fn build_library(items: Vec<crate::cache::MediaItem>, conn: &Connection) -> Libr
         .collect();
 
     // Сериалы — группировка
-    let tv_shows = build_tv_shows(&items, conn);
+    let tv_shows = build_tv_shows(&items);
 
     Library { movies, tv_shows }
 }
@@ -374,7 +374,7 @@ fn media_item_to_video_file(item: &crate::cache::MediaItem, conn: &Connection) -
     }
 }
 
-fn build_tv_shows(items: &[crate::cache::MediaItem], conn: &Connection) -> Vec<TvShow> {
+fn build_tv_shows(items: &[crate::cache::MediaItem]) -> Vec<TvShow> {
     use std::collections::HashMap;
 
     // Группируем эпизоды по (tmdb_id или parsed_title, year)
