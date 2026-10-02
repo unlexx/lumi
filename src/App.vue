@@ -18,6 +18,7 @@ import MovieCard from '@/components/MovieCard.vue'
 import ShowCard from '@/components/ShowCard.vue'
 import MatchModal from './components/MatchModal.vue'
 import MovieModal from './components/MovieModal.vue'
+import '@/styles/modal.css'
 
 const { library, loading, error, scanProgress, refresh } = useLibrary()
 const { load: loadPosters } = usePosters(library)
@@ -389,44 +390,6 @@ body {
   object-fit: cover;
   display: block;
   border-radius: 8px;
-}
-/* Модалка */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  z-index: 100;
-}
-
-.modal {
-  background: #1e2127;
-  border-radius: 12px;
-  max-width: 800px;
-  width: 100%;
-  max-height: 90vh;
-  overflow-y: auto;
-  position: relative;
-  padding: 1.5rem;
-}
-
-.close {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  background: transparent;
-  border: none;
-  color: #aaa;
-  font-size: 1.5rem;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.close:hover {
-  color: #fff;
 }
 
 .tabs {
