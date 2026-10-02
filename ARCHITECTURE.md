@@ -125,7 +125,7 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 - **LUMI-21c:** manual match updates `media_items` via `save_manual_match_to_item`
 - **LUMI-21d:** `uid` in `VideoFile`, context menu matching works
 - **LUMI-21e:** (planned) remove legacy `movies` / `tv_shows` tables
-- **LUMI-21b:** (in progress) Vue refactoring into components / composables
+- **LUMI-21b:**  Vue refactoring into components / composables
 
 ### Future (planned)
 
@@ -177,7 +177,3 @@ For every new task:
 4. Pull request to `master`.
 
 When starting a task, ask the assistant for the issue title and description first.
-
-
-## Current work
-See [REFACTORING.md](./REFACTORING.md) for the ongoing Vue refactoring plan.
