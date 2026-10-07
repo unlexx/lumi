@@ -8,8 +8,6 @@ import UndefinedCard from '@/components/UndefinedCard.vue'
 import UndefinedModal from '@/components/UndefinedModal.vue'
 import MovieCard from '@/components/MovieCard.vue'
 import ShowCard from '@/components/ShowCard.vue'
-import MovieModal from '@/components/MovieModal.vue'
-import ShowModal from '@/components/ShowModal.vue'
 import MatchModal from '@/components/MatchModal.vue'
 
 import type {
@@ -35,8 +33,6 @@ const { continueWatching, load: loadContinueWatching } = useContinueWatching(lib
 const { markMovie, markShow } = useWatched(loadContinueWatching)
 const { items: undefinedItems, load: loadUndefined, removeMany: removeUndefinedMany } = useUndefined()
 
-const selectedVideo = ref<VideoFile | null>(null)
-const selectedShow = ref<TvShow | null>(null)
 const selectedUndefined = ref<UndefinedItem | null>(null)
 
 const matchTarget = ref<{
@@ -45,16 +41,31 @@ const matchTarget = ref<{
     uids: string[]
 } | null>(null)
 
+const emit = defineEmits<{
+    (e: 'open-movie', movie: VideoFile): void
+    (e: 'open-show', show: TvShow): void
+}>()
+
 useKeyboard({
     onEscape: () => {
-        if (selectedVideo.value) selectedVideo.value = null
-        else if (selectedShow.value) selectedShow.value = null
-        else if (selectedUndefined.value) selectedUndefined.value = null
+        if (selectedUndefined.value) selectedUndefined.value = null
         else if (matchTarget.value) matchTarget.value = null
         else invoke('toggle_fullscreen').catch(console.error)
     }
 })
 
+function handleEscape(): boolean {
+    if (selectedUndefined.value) {
+        selectedUndefined.value = null
+        return true
+    }
+    if (matchTarget.value) {
+        matchTarget.value = null
+        return true
+    }
+    return false
+}
+defineExpose({ handleEscape })
 async function refreshAll() {
     await refresh()
     await loadPosters()
@@ -111,14 +122,6 @@ function formatTime(seconds: number): string {
         return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     }
     return `${m}:${String(s).padStart(2, '0')}`
-}
-
-function openMovie(video: VideoFile) {
-    selectedVideo.value = video
-}
-
-function openShow(show: TvShow) {
-    selectedShow.value = show
 }
 
 function openUndefined(item: UndefinedItem) {
@@ -236,16 +239,18 @@ async function applyMatch(result: TmdbSearchResult) {
             <section v-if="library.movies.length" class="section">
                 <h2>Фильмы</h2>
                 <div class="grid">
-                    <MovieCard v-for="movie in library.movies" :key="movie.path" :movie="movie" @open="openMovie"
-                        @play="play" @match="openMatchModalForMovie" @mark-watched="markMovie" />
+                    <MovieCard v-for="movie in library.movies" :key="movie.path" :movie="movie"
+                        @open="(m) => emit('open-movie', m)" @play="play" @match="openMatchModalForMovie"
+                        @mark-watched="markMovie" />
                 </div>
             </section>
 
             <section v-if="library.tv_shows.length" class="section">
                 <h2>Сериалы</h2>
                 <div class="grid">
-                    <ShowCard v-for="show in library.tv_shows" :key="show.title" :show="show" @open="openShow"
-                        @play="play" @match="openMatchModalForShow" @mark-watched="markShow" />
+                    <ShowCard v-for="show in library.tv_shows" :key="show.title" :show="show"
+                        @open="(s) => emit('open-show', s)" @play="play" @match="openMatchModalForShow"
+                        @mark-watched="markShow" />
                 </div>
             </section>
 
@@ -263,12 +268,7 @@ async function applyMatch(result: TmdbSearchResult) {
             </p>
         </template>
 
-        <MovieModal v-if="selectedVideo" :movie="selectedVideo" @close="selectedVideo = null" @play="play" />
-
-        <ShowModal v-if="selectedShow" :show="selectedShow" @close="selectedShow = null" @play="play" />
-
         <MatchModal v-if="matchTarget" :target="matchTarget" @close="matchTarget = null" @apply="applyMatch" />
-
         <UndefinedModal v-if="selectedUndefined" :item="selectedUndefined" @close="selectedUndefined = null"
             @play="playUndefined" @match="matchUndefined" />
     </div>

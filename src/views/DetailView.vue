@@ -1,0 +1,466 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { onKeyStroke } from '@vueuse/core'
+import type { VideoFile, TvShow, Episode } from '@/types'
+
+const props = defineProps<{
+    item: VideoFile | TvShow
+}>()
+
+onKeyStroke('Escape', (e) => {
+    e.preventDefault()
+    emit('close')
+})
+
+const emit = defineEmits<{
+    (e: 'close'): void
+    (e: 'play', path: string, startPosition: number | null): void
+}>()
+
+function isShow(x: VideoFile | TvShow): x is TvShow {
+    return 'seasons' in x
+}
+
+const isMovie = computed(() => !isShow(props.item))
+const movie = computed<VideoFile | null>(() => (isMovie.value ? (props.item as VideoFile) : null))
+const show = computed<TvShow | null>(() => (isShow(props.item) ? props.item : null))
+
+const title = computed(() => {
+    if (movie.value) {
+        return movie.value.tmdb?.title || movie.value.parsed.title
+    }
+    return show.value?.title ?? ''
+})
+
+const year = computed(() => {
+    if (movie.value) return movie.value.parsed.year
+    return show.value?.year ?? null
+})
+
+const posterUrl = computed(() => {
+    if (movie.value) return movie.value.tmdb?.poster_local || null
+    return show.value?.tmdb?.poster_local || null
+})
+
+const rating = computed(() => {
+    if (movie.value) return movie.value.tmdb?.rating ?? null
+    return show.value?.tmdb?.rating ?? null
+})
+
+const overview = computed(() => {
+    if (movie.value) return movie.value.tmdb?.overview ?? null
+    return show.value?.tmdb?.overview ?? null
+})
+
+// Movie-specific
+const resumeMoviePosition = computed(() => {
+    if (!movie.value) return null
+    const m = movie.value
+    if (m.watched) return null
+    if (!m.position || m.position <= 0) return null
+    if (m.duration && m.position / m.duration >= 0.95) return null
+    return m.position
+})
+
+// Show-specific
+function episodesWatched(show: TvShow): number {
+    return show.seasons.flatMap((s) => s.episodes).filter((e) => e.watched).length
+}
+function episodesTotal(show: TvShow): number {
+    return show.seasons.flatMap((s) => s.episodes).length
+}
+
+const firstUnwatchedEpisode = computed<Episode | null>(() => {
+    if (!show.value) return null
+    for (const season of show.value.seasons) {
+        for (const ep of season.episodes) {
+            if (!ep.watched) return ep
+        }
+    }
+    return null
+})
+
+function episodeLabel(ep: Episode): string {
+    if (!show.value) return ''
+    const season = show.value.seasons.find((s) => s.episodes.includes(ep))
+    if (!season) return ''
+    return `S${String(season.number).padStart(2, '0')}E${String(ep.number).padStart(2, '0')}`
+}
+
+function playMovie() {
+    if (!movie.value) return
+    emit('play', movie.value.path, null)
+}
+
+function resumeMovie() {
+    if (!movie.value || resumeMoviePosition.value === null) return
+    emit('play', movie.value.path, resumeMoviePosition.value)
+}
+
+function playEpisode(ep: Episode) {
+    const start = ep.position && ep.position > 0 ? ep.position : null
+    emit('play', ep.path, start)
+}
+</script>
+
+<template>
+    <div class="detail">
+        <div class="detail-hero">
+            <div class="hero-backdrop">
+                <img v-if="posterUrl" :src="posterUrl" :alt="title" class="hero-image" />
+            </div>
+
+            <div class="hero-content">
+                <div class="hero-poster">
+                    <img v-if="posterUrl" :src="posterUrl" :alt="title" />
+                    <div v-else class="poster-placeholder">—</div>
+                </div>
+
+                <div class="hero-info">
+                    <h1>
+                        {{ title }}
+                        <span v-if="year" class="hero-year">({{ year }})</span>
+                    </h1>
+
+                    <div v-if="rating" class="hero-rating">
+                        ★ {{ rating.toFixed(1) }}
+                    </div>
+                    <div v-if="show" class="hero-progress">
+                        <template v-if="episodesWatched(show) === episodesTotal(show)">
+                            ✓ Все просмотрено
+                        </template>
+                        <template v-else-if="episodesWatched(show) > 0">
+                            Осталось {{ episodesTotal(show) - episodesWatched(show) }} из {{ episodesTotal(show) }}
+                            серий
+                        </template>
+                        <template v-else>
+                            {{ episodesTotal(show) }} серий
+                        </template>
+                    </div>
+                    <div v-if="overview" class="hero-overview">
+                        {{ overview }}
+                    </div>
+
+                    <!-- Теги для фильма -->
+                    <div v-if="movie" class="hero-tags">
+                        <span v-if="movie.parsed.resolution">{{ movie.parsed.resolution }}</span>
+                        <span v-if="movie.parsed.source">{{ movie.parsed.source }}</span>
+                        <span v-if="movie.parsed.codec">{{ movie.parsed.codec }}</span>
+                    </div>
+
+                    <!-- Кнопки -->
+                    <div class="hero-actions">
+                        <button v-if="isMovie" class="btn-primary" @click="playMovie">
+                            ▶ Смотреть
+                        </button>
+                        <button v-if="isMovie && resumeMoviePosition" class="btn-secondary" @click="resumeMovie">
+                            ↻ Продолжить
+                        </button>
+
+                        <button v-if="show && firstUnwatchedEpisode" class="btn-primary"
+                            @click="playEpisode(firstUnwatchedEpisode)">
+                            ▶ Смотреть {{ episodeLabel(firstUnwatchedEpisode) }}
+                        </button>
+                    </div>
+
+                    <div v-if="movie" class="hero-path">{{ movie.name }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Эпизоды для сериала -->
+        <div v-if="show" class="detail-body">
+            <div v-for="season in show.seasons" :key="season.number" class="season">
+                <h2>Сезон {{ season.number }}</h2>
+                <ul class="episode-list">
+                    <li v-for="ep in season.episodes" :key="ep.path" class="episode" :class="{ watched: ep.watched }">
+                        <span class="ep-number">{{ episodeLabel(ep) }}</span>
+                        <span class="ep-name">{{ ep.name }}</span>
+                        <span v-if="ep.watched" class="ep-watched">✓</span>
+                        <button class="ep-play" @click="playEpisode(ep)">▶</button>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <button class="detail-close" @click="emit('close')" title="Назад (Esc)">← Назад</button>
+    </div>
+</template>
+
+<style scoped>
+.detail {
+    position: relative;
+    min-height: 100vh;
+    background: #14161a;
+    padding-bottom: 4rem;
+}
+
+/* Hero */
+.detail-hero {
+    position: relative;
+    padding: 2rem 4rem 0;
+    margin-bottom: 2rem;
+}
+
+/* Backdrop: размытый постер, растянут на всю ширину блока hero */
+.hero-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 420px;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.hero-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(60px) brightness(0.5);
+    transform: scale(1.15);
+}
+
+.hero-content {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    gap: 2rem;
+    align-items: flex-start;
+    padding-top: 3rem;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* Постер */
+.hero-poster {
+    flex: 0 0 240px;
+    aspect-ratio: 2 / 3;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #1e2127;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+
+.hero-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.poster-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #666;
+    font-size: 2rem;
+}
+
+.hero-info {
+    flex: 1;
+    padding-top: 2rem;
+    max-width: 800px;
+}
+
+.hero-info h1 {
+    margin: 0 0 0.5rem 0;
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1.15;
+}
+
+.hero-year {
+    color: #888;
+    font-weight: 400;
+    font-size: 1.5rem;
+}
+
+.hero-rating {
+    color: #ffd166;
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+}
+
+.hero-overview {
+    color: #ccc;
+    line-height: 1.5;
+    font-size: 1rem;
+    max-width: 720px;
+    margin-bottom: 1rem;
+}
+
+.hero-tags {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+}
+
+.hero-tags span {
+    background: #2a2e35;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: #aaa;
+}
+
+.hero-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.btn-primary,
+.btn-secondary {
+    border: none;
+    padding: 0.7rem 1.5rem;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.btn-primary {
+    background: #4a9eff;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #3a8eef;
+}
+
+.btn-secondary {
+    background: #2a2e35;
+    color: #e6e6e6;
+    border: 1px solid #3a3f47;
+}
+
+.btn-secondary:hover {
+    background: #353a42;
+}
+
+.hero-path {
+    font-size: 0.75rem;
+    color: #666;
+    font-family: monospace;
+    word-break: break-all;
+    max-width: 720px;
+}
+
+/* Episodes */
+.detail-body {
+    max-width: 1400px;
+    margin: 2rem auto 0;
+    padding: 0 4rem;
+}
+
+.season {
+    margin-bottom: 2rem;
+}
+
+.season h2 {
+    margin: 0 0 1rem;
+    font-size: 1.2rem;
+    color: #ccc;
+    font-weight: 500;
+}
+
+.episode-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.episode {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 6px;
+    border-bottom: 1px solid #2a2e35;
+    transition: background 0.15s ease;
+}
+
+.episode:hover {
+    background: #1e2127;
+}
+
+.ep-number {
+    font-weight: 600;
+    min-width: 80px;
+    color: #4a9eff;
+    font-family: monospace;
+}
+
+.ep-name {
+    font-size: 0.85rem;
+    color: #888;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: auto;
+}
+
+.ep-play {
+    background: #2a2e35;
+    color: #e6e6e6;
+    border: 1px solid #3a3f47;
+    padding: 0.35rem 0.85rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.ep-play:hover {
+    background: #353a42;
+}
+
+.ep-watched {
+    color: #4a9eff;
+    font-weight: bold;
+    font-size: 1rem;
+}
+
+.episode.watched .ep-number {
+    color: #4a9eff;
+}
+
+/* Close button */
+.detail-close {
+    position: fixed;
+    top: 1.5rem;
+    left: 1.5rem;
+    background: rgba(30, 33, 39, 0.9);
+    color: #e6e6e6;
+    border: 1px solid #3a3f47;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+}
+
+.detail-close:hover {
+    background: #2a2e35;
+}
+
+.hero-progress {
+    color: #aaa;
+    font-size: 0.95rem;
+    margin-bottom: 1rem;
+}
+
+.hero-backdrop::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom,
+            rgba(20, 22, 26, 0.3) 0%,
+            rgba(20, 22, 26, 0.7) 50%,
+            #14161a 100%);
+}
+</style>
