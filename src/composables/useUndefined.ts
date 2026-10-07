@@ -20,15 +20,21 @@ export function useUndefined() {
     }
   }
 
-  function remove(uid: string) {
+function remove(uid: string) {
     items.value = items.value.filter((i) => i.uid !== uid)
-  }
+}
 
-  return {
+function removeMany(uids: string[]) {
+    const set = new Set(uids)
+    items.value = items.value.filter((i) => !set.has(i.uid))
+}
+
+return {
     items,
     loading,
     error,
     load,
-    remove
-  }
+    remove,
+    removeMany
+}
 }

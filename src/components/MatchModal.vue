@@ -4,10 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 import type { TmdbSearchResult } from '@/types'
 
 interface MatchTarget {
-  path: string
   media_type: 'movie' | 'tv_shows'
   title: string
-  uid?: string
+  uids: string[]
 }
 
 const props = defineProps<{
@@ -68,7 +67,7 @@ onMounted(() => {
   <div class="modal-backdrop" @mousedown.self="emit('close')">
     <div class="modal match-modal">
       <button class="close" @click="emit('close')">×</button>
-      <h2>Сопоставить с TMDB</h2>
+      <h2>Сопоставить: {{ target.title }}</h2>
 
       <div class="search-row">
         <input
