@@ -310,6 +310,7 @@ pub async fn apply_tmdb_match(
     tmdb_id: u32,
     media_type: String,
     uids: Vec<String>,
+    state: tauri::State<'_, crate::cache::AppState>,
 ) -> Result<MatchResult, String> {
     if uids.is_empty() {
         return Err("uids is empty".to_string());
@@ -368,9 +369,6 @@ pub async fn apply_tmdb_match(
         rating: raw["vote_average"].as_f64(),
     };
 
-    // Обновляем media_items для всех uid'ов
-    let conn = crate::cache::init_db().map_err(|e| e.to_string())?;
-
     let poster_path = result
         .poster_url
         .as_ref()
@@ -381,6 +379,8 @@ pub async fn apply_tmdb_match(
         .as_str()
         .or_else(|| raw["first_air_date"].as_str());
 
+    // Lock только здесь, после всех await
+    let conn = state.conn();
     crate::cache::update_tmdb_for_uids(
         &conn,
         &uids,

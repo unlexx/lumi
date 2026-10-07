@@ -11,11 +11,11 @@ mod tv_parser;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Загружаем .env при старте приложения
     dotenvy::dotenv().ok();
-    cache::init_db().expect("Не удалось инициализировать кэш");
+    let state = cache::AppState::init().expect("Не удалось инициализировать кэш");
 
     tauri::Builder::default()
+        .manage(state)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

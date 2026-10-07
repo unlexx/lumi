@@ -1,7 +1,8 @@
 use crate::cache;
+use crate::cache::AppState;
 use crate::mpv;
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 pub async fn play_video(
@@ -63,41 +64,39 @@ fn play_and_track(
         last_duration
     );
 
-    // Сохраняем в базу
-    if let Ok(conn) = cache::init_db() {
+    // Записываем статус в БД, держим lock только на время записи
+    let watched = {
+        let state = app.state::<AppState>();
+        let conn = state.conn();
+
         if let Err(e) = cache::mark_watched(&conn, file_path, last_position, last_duration) {
             crate::log_info!("Failed to save watch status: {}", e);
-        } else {
-            if let Ok(conn) = cache::init_db() {
-                if let Err(e) = cache::mark_watched(&conn, file_path, last_position, last_duration)
-                {
-                    crate::log_info!("Failed to save watch status: {}", e);
-                } else {
-                    let watched = last_duration > 0.0 && last_position / last_duration >= 0.95;
-                    crate::log_info!(
-                        "  → Marked as {} ({:.1}%)",
-                        if watched { "WATCHED" } else { "in progress" },
-                        if last_duration > 0.0 {
-                            last_position / last_duration * 100.0
-                        } else {
-                            0.0
-                        }
-                    );
-
-                    app.emit(
-                        "watch_status_updated",
-                        serde_json::json!({
-                            "path": file_path,
-                            "watched": watched,
-                            "position": last_position,
-                            "duration": last_duration,
-                        }),
-                    )
-                    .ok();
-                }
-            }
+            return Ok(());
         }
-    }
+
+        last_duration > 0.0 && last_position / last_duration >= 0.95
+    }; // lock отпущен здесь
+
+    crate::log_info!(
+        "  → Marked as {} ({:.1}%)",
+        if watched { "WATCHED" } else { "in progress" },
+        if last_duration > 0.0 {
+            last_position / last_duration * 100.0
+        } else {
+            0.0
+        }
+    );
+
+    app.emit(
+        "watch_status_updated",
+        serde_json::json!({
+            "path": file_path,
+            "watched": watched,
+            "position": last_position,
+            "duration": last_duration,
+        }),
+    )
+    .ok();
 
     Ok(())
 }
