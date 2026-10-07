@@ -102,7 +102,6 @@ pub async fn scan_all(
     crate::log_info!("[scan] acquiring conn lock for stage 1");
     {
         let conn = state.conn();
-crate::log_info!("[scan] conn lock acquired for stage 1");
         for (idx, folder) in folders.iter().enumerate() {
             let path = Path::new(&folder.path);
             if !path.exists() || !path.is_dir() {
@@ -167,14 +166,36 @@ crate::log_info!("[scan] conn lock acquired for stage 1");
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
-
                 let (parsed_title, parsed_year, season, episode) = match folder.media_type {
                     crate::config::MediaType::Movie => {
                         let parsed = parse_filename(&name);
                         (parsed.title, parsed.year, None, None)
                     }
                     crate::config::MediaType::TvShows => {
-                        let tv = crate::tv_parser::parse_tv_filename(&name);
+                        // Собираем имена родительских папок: [родитель, прародитель].
+                        // Глубже не идём — достаточно для структур Silo/Silo S01/file.mkv.
+                        let parent_dirs: Vec<String> = file_path
+                            .parent()
+                            .map(|p| {
+                                let mut dirs = Vec::new();
+                                let mut cur = Some(p);
+                                for _ in 0..2 {
+                                    if let Some(d) = cur {
+                                        if let Some(name) = d.file_name() {
+                                            dirs.push(name.to_string_lossy().to_string());
+                                        }
+                                        cur = d.parent();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                dirs
+                            })
+                            .unwrap_or_default();
+
+                        let parent_refs: Vec<&str> =
+                            parent_dirs.iter().map(|s| s.as_str()).collect();
+                        let tv = crate::tv_parser::parse_tv_filename(&name, &parent_refs);
                         (tv.title, tv.year, tv.season, tv.episode)
                     }
                 };
@@ -208,7 +229,6 @@ crate::log_info!("[scan] conn lock acquired for stage 1");
             }
         }
     } // lock отпущен
-crate::log_info!("[scan] stage 1 done, lock released");
     crate::log_info!("=== New files: {} ===", new_uids.len());
 
     // === Этап 2: TMDB для новых фильмов ===
