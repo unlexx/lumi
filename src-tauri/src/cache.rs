@@ -1,4 +1,3 @@
-use crate::tmdb::MatchResult;
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::path::PathBuf;
