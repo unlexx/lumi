@@ -33,17 +33,16 @@ const { load: loadPosters } = usePosters(library)
 const { play } = usePlayer()
 const { continueWatching, load: loadContinueWatching } = useContinueWatching(library)
 const { markMovie, markShow } = useWatched(loadContinueWatching)
-const { items: undefinedItems, load: loadUndefined, remove: removeUndefined } = useUndefined()
+const { items: undefinedItems, load: loadUndefined, removeMany: removeUndefinedMany } = useUndefined()
 
 const selectedVideo = ref<VideoFile | null>(null)
 const selectedShow = ref<TvShow | null>(null)
 const selectedUndefined = ref<UndefinedItem | null>(null)
 
 const matchTarget = ref<{
-    path: string
     media_type: 'movie' | 'tv_shows'
     title: string
-    uid?: string
+    uids: string[]
 } | null>(null)
 
 useKeyboard({
@@ -132,38 +131,39 @@ function playUndefined(path: string) {
 }
 
 function openMatchModal(target: {
-    path: string
     media_type: 'movie' | 'tv_shows'
     title: string
-    uid?: string
+    uids: string[]
 }) {
     matchTarget.value = target
 }
 
 function openMatchModalForMovie(movie: VideoFile) {
     openMatchModal({
-        path: movie.path,
         media_type: 'movie',
         title: movie.tmdb?.title || movie.parsed.title,
-        uid: movie.uid
+        uids: [movie.uid]
     })
 }
 
 function openMatchModalForShow(show: TvShow) {
+    const uids = show.seasons.flatMap((s) => s.episodes.map((ep) => ep.uid))
+    if (!uids.length) {
+        error.value = 'Нет эпизодов для сопоставления'
+        return
+    }
     openMatchModal({
-        path: '',
         media_type: 'tv_shows',
         title: show.title,
-        uid: undefined
+        uids
     })
 }
 
 function matchUndefined(item: UndefinedItem) {
     openMatchModal({
-        path: item.path,
         media_type: item.media_type,
         title: item.display_title,
-        uid: item.uid
+        uids: [item.uid]
     })
     selectedUndefined.value = null
 }
@@ -179,12 +179,11 @@ async function applyMatch(result: TmdbSearchResult) {
         await invoke<MatchResult>('apply_tmdb_match', {
             tmdbId: result.id,
             mediaType: target.media_type,
-            uid: target.uid ?? null
+            uids: target.uids
         })
 
-        if (target.uid) {
-            removeUndefined(target.uid)
-        }
+        // Убираем любые совпадающие uid'ы из локального списка undefined
+        removeUndefinedMany(target.uids)
 
         await refreshAll()
         matchTarget.value = null

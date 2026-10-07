@@ -217,58 +217,6 @@ pub fn set_watched_bulk(conn: &Connection, paths: &[String], watched: bool) -> S
     Ok(())
 }
 
-pub fn save_manual_match(result: &MatchResult, media_type: &str) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let poster_path = result
-        .poster_url
-        .as_ref()
-        .and_then(|url| url.split("/t/p/w500").nth(1))
-        .map(|s| s.to_string());
-
-    if media_type == "movie" {
-        conn.execute(
-            "INSERT OR REPLACE INTO movies
-             (tmdb_id, title, original_title, overview, poster_path, rating, release_date, cached_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![
-                result.tmdb_id,
-                result.title,
-                result.original_title,
-                result.overview,
-                poster_path,
-                result.rating,
-                None::<String>,
-                now,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    } else {
-        conn.execute(
-            "INSERT OR REPLACE INTO tv_shows
-             (tmdb_id, name, original_name, overview, poster_path, rating, first_air_date, cached_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![
-                result.tmdb_id,
-                result.title,
-                result.original_title,
-                result.overview,
-                poster_path,
-                result.rating,
-                None::<String>,
-                now,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
-}
-
 pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
     conn.query_row(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
@@ -373,6 +321,48 @@ pub fn update_tmdb(
     Ok(())
 }
 
+/// Батч-обновление TMDB-данных для списка uid.
+/// Используется при ручном сопоставлении сериала — обновляем все эпизоды разом.
+pub fn update_tmdb_for_uids(
+    conn: &Connection,
+    uids: &[String],
+    tmdb_id: u32,
+    title: &str,
+    original_title: Option<&str>,
+    overview: Option<&str>,
+    poster_path: Option<&str>,
+    rating: Option<f64>,
+    release_date: Option<&str>,
+) -> SqlResult<usize> {
+    let now = now_ts();
+    let tx = conn.unchecked_transaction()?;
+
+    let mut count = 0;
+    for uid in uids {
+        let affected = tx.execute(
+            "UPDATE media_items
+             SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
+                 poster_path = ?5, rating = ?6, release_date = ?7, updated_at = ?8
+             WHERE uid = ?9",
+            rusqlite::params![
+                tmdb_id,
+                title,
+                original_title,
+                overview,
+                poster_path,
+                rating,
+                release_date,
+                now,
+                uid,
+            ],
+        )?;
+        count += affected;
+    }
+
+    tx.commit()?;
+    Ok(count)
+}
+
 pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
@@ -457,35 +447,4 @@ fn now_ts() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
-}
-
-pub fn save_manual_match_to_item(result: &MatchResult, uid: &str) -> Result<(), String> {
-    let conn = init_db().map_err(|e| e.to_string())?;
-    let now = now_ts();
-
-    let poster_path = result
-        .poster_url
-        .as_ref()
-        .and_then(|url| url.split("/t/p/w500").nth(1))
-        .map(|s| s.to_string());
-
-    conn.execute(
-        "UPDATE media_items
-         SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
-             poster_path = ?5, rating = ?6, updated_at = ?7
-         WHERE uid = ?8",
-        rusqlite::params![
-            result.tmdb_id,
-            result.title,
-            result.original_title,
-            result.overview,
-            poster_path,
-            result.rating,
-            now,
-            uid,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
 }

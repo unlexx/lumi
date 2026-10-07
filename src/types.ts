@@ -30,6 +30,7 @@ export interface VideoFile {
 }
 
 export interface Episode {
+  uid: string 
   number: number
   path: string
   name: string

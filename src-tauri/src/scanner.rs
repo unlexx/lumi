@@ -48,9 +48,10 @@ pub struct Season {
 
 #[derive(Serialize, Clone)]
 pub struct Episode {
-    pub number: u32, // 1
+    pub uid: String, 
+    pub number: u32,
     pub path: String,
-    pub name: String, // полное имя файла
+    pub name: String,
     pub parsed: ParsedVideo,
     pub watched: bool,
     pub position: Option<f64>,
@@ -410,6 +411,7 @@ fn build_tv_shows(items: &[crate::cache::MediaItem]) -> Vec<TvShow> {
                 .unwrap_or_default();
 
             seasons_map.entry(season_num).or_default().push(Episode {
+                uid: ep.uid.clone(),
                 number: episode_num,
                 path: ep.path.clone(),
                 name: ep.name.clone(),

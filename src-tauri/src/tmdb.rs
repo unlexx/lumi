@@ -309,8 +309,12 @@ pub struct MatchResult {
 pub async fn apply_tmdb_match(
     tmdb_id: u32,
     media_type: String,
-    uid: Option<String>,
+    uids: Vec<String>,
 ) -> Result<MatchResult, String> {
+    if uids.is_empty() {
+        return Err("uids is empty".to_string());
+    }
+
     let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
     let client = build_client().map_err(|e| e.to_string())?;
 
@@ -355,23 +359,40 @@ pub async fn apply_tmdb_match(
         .as_str()
         .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p));
 
-
     let result = MatchResult {
         tmdb_id,
         title,
         original_title,
         overview: raw["overview"].as_str().map(|s| s.to_string()),
-        poster_url,
+        poster_url: poster_url.clone(),
         rating: raw["vote_average"].as_f64(),
     };
 
-    // Если uid передан — обновляем media_items
-    if let Some(uid) = uid {
-        cache::save_manual_match_to_item(&result, &uid)?;
-    } else {
-        // Старое поведение — для совместимости (пока)
-        cache::save_manual_match(&result, media_type.as_str())?;
-    }
+    // Обновляем media_items для всех uid'ов
+    let conn = crate::cache::init_db().map_err(|e| e.to_string())?;
+
+    let poster_path = result
+        .poster_url
+        .as_ref()
+        .and_then(|url| url.split("/t/p/w500").nth(1))
+        .map(|s| s.to_string());
+
+    let release_date = raw["release_date"]
+        .as_str()
+        .or_else(|| raw["first_air_date"].as_str());
+
+    crate::cache::update_tmdb_for_uids(
+        &conn,
+        &uids,
+        result.tmdb_id,
+        &result.title,
+        result.original_title.as_deref(),
+        result.overview.as_deref(),
+        poster_path.as_deref(),
+        result.rating,
+        release_date,
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(result)
 }
