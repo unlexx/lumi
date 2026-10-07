@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { onKeyStroke } from '@vueuse/core'
 import type { VideoFile, TvShow, Episode } from '@/types'
 
@@ -7,15 +8,15 @@ const props = defineProps<{
     item: VideoFile | TvShow
 }>()
 
-onKeyStroke('Escape', (e) => {
-    e.preventDefault()
-    emit('close')
-})
-
 const emit = defineEmits<{
     (e: 'close'): void
     (e: 'play', path: string, startPosition: number | null): void
 }>()
+
+onKeyStroke('Escape', (e) => {
+    e.preventDefault()
+    emit('close')
+})
 
 function isShow(x: VideoFile | TvShow): x is TvShow {
     return 'seasons' in x
@@ -26,9 +27,7 @@ const movie = computed<VideoFile | null>(() => (isMovie.value ? (props.item as V
 const show = computed<TvShow | null>(() => (isShow(props.item) ? props.item : null))
 
 const title = computed(() => {
-    if (movie.value) {
-        return movie.value.tmdb?.title || movie.value.parsed.title
-    }
+    if (movie.value) return movie.value.tmdb?.title || movie.value.parsed.title
     return show.value?.title ?? ''
 })
 
@@ -52,7 +51,6 @@ const overview = computed(() => {
     return show.value?.tmdb?.overview ?? null
 })
 
-// Movie-specific
 const resumeMoviePosition = computed(() => {
     if (!movie.value) return null
     const m = movie.value
@@ -62,10 +60,10 @@ const resumeMoviePosition = computed(() => {
     return m.position
 })
 
-// Show-specific
 function episodesWatched(show: TvShow): number {
     return show.seasons.flatMap((s) => s.episodes).filter((e) => e.watched).length
 }
+
 function episodesTotal(show: TvShow): number {
     return show.seasons.flatMap((s) => s.episodes).length
 }
@@ -101,6 +99,97 @@ function playEpisode(ep: Episode) {
     const start = ep.position && ep.position > 0 ? ep.position : null
     emit('play', ep.path, start)
 }
+
+// === LUMI-18b: episode stills ===
+
+const stills = ref<Record<string, string>>({})
+
+function stillUrl(ep: Episode): string | null {
+    if (stills.value[ep.uid]) return stills.value[ep.uid]
+    if (ep.episode_still_local) return convertFileSrc(ep.episode_still_local)
+    return null
+}
+
+async function mapLimit<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<R>
+): Promise<R[]> {
+    const results: R[] = new Array(items.length)
+    let idx = 0
+    const workers = Array.from(
+        { length: Math.min(limit, items.length) },
+        async () => {
+            while (idx < items.length) {
+                const i = idx++
+                results[i] = await fn(items[i])
+            }
+        }
+    )
+    await Promise.all(workers)
+    return results
+}
+
+onMounted(async () => {
+    if (!show.value || !show.value.tmdb) return
+
+    const tmdbId = show.value.tmdb.id
+    const all: { ep: Episode; season: number }[] = []
+    for (const s of show.value.seasons) {
+        for (const ep of s.episodes) {
+            all.push({ ep, season: s.number })
+        }
+    }
+
+    // Этап 1: fetch meta
+    const needMeta = all.filter((x) => !x.ep.episode_meta_fetched)
+    if (needMeta.length) {
+        console.log(`[DetailView] fetching meta for ${needMeta.length} episodes`)
+        await mapLimit(needMeta, 4, async (x) => {
+            try {
+                const meta = await invoke<{
+                    name: string | null
+                    overview: string | null
+                    still_url: string | null
+                    still_path: string | null
+                }>('fetch_episode_meta', {
+                    tmdbId,
+                    season: x.season,
+                    episode: x.ep.number,
+                    uid: x.ep.uid
+                })
+                x.ep.episode_name = meta.name
+                x.ep.episode_overview = meta.overview
+                x.ep.episode_still_path = meta.still_path
+                x.ep.episode_meta_fetched = true
+            } catch (e) {
+                console.error(`[DetailView] fetch_episode_meta failed for ${x.ep.uid}:`, e)
+            }
+        })
+    }
+
+    // Этап 2: fetch stills
+    const needStill = all.filter(
+        (x) => x.ep.episode_still_path && !x.ep.episode_still_local
+    )
+    if (needStill.length) {
+        console.log(`[DetailView] fetching stills for ${needStill.length} episodes`)
+        await mapLimit(needStill, 4, async (x) => {
+            try {
+                const path = await invoke<string>('get_episode_still', {
+                    tmdbId,
+                    season: x.season,
+                    episode: x.ep.number,
+                    stillPath: x.ep.episode_still_path!
+                })
+                x.ep.episode_still_local = path
+                stills.value[x.ep.uid] = convertFileSrc(path)
+            } catch (e) {
+                console.error(`[DetailView] get_episode_still failed for ${x.ep.uid}:`, e)
+            }
+        })
+    }
+})
 </script>
 
 <template>
@@ -125,30 +214,30 @@ function playEpisode(ep: Episode) {
                     <div v-if="rating" class="hero-rating">
                         ★ {{ rating.toFixed(1) }}
                     </div>
+
                     <div v-if="show" class="hero-progress">
                         <template v-if="episodesWatched(show) === episodesTotal(show)">
                             ✓ Все просмотрено
                         </template>
                         <template v-else-if="episodesWatched(show) > 0">
-                            Осталось {{ episodesTotal(show) - episodesWatched(show) }} из {{ episodesTotal(show) }}
-                            серий
+                            Осталось {{ episodesTotal(show) - episodesWatched(show) }} из
+                            {{ episodesTotal(show) }} серий
                         </template>
                         <template v-else>
                             {{ episodesTotal(show) }} серий
                         </template>
                     </div>
+
                     <div v-if="overview" class="hero-overview">
                         {{ overview }}
                     </div>
 
-                    <!-- Теги для фильма -->
                     <div v-if="movie" class="hero-tags">
                         <span v-if="movie.parsed.resolution">{{ movie.parsed.resolution }}</span>
                         <span v-if="movie.parsed.source">{{ movie.parsed.source }}</span>
                         <span v-if="movie.parsed.codec">{{ movie.parsed.codec }}</span>
                     </div>
 
-                    <!-- Кнопки -->
                     <div class="hero-actions">
                         <button v-if="isMovie" class="btn-primary" @click="playMovie">
                             ▶ Смотреть
@@ -168,14 +257,20 @@ function playEpisode(ep: Episode) {
             </div>
         </div>
 
-        <!-- Эпизоды для сериала -->
         <div v-if="show" class="detail-body">
             <div v-for="season in show.seasons" :key="season.number" class="season">
                 <h2>Сезон {{ season.number }}</h2>
                 <ul class="episode-list">
-                    <li v-for="ep in season.episodes" :key="ep.path" class="episode" :class="{ watched: ep.watched }">
-                        <span class="ep-number">{{ episodeLabel(ep) }}</span>
-                        <span class="ep-name">{{ ep.name }}</span>
+                    <li v-for="ep in season.episodes" :key="ep.uid" class="episode" :class="{ watched: ep.watched }">
+                        <div class="ep-thumb">
+                            <img v-if="stillUrl(ep)" :src="stillUrl(ep)!" :alt="ep.episode_name || ep.name"
+                                loading="lazy" />
+                            <div v-else class="ep-thumb-placeholder">▶</div>
+                        </div>
+                        <div class="ep-info">
+                            <div class="ep-number">{{ episodeLabel(ep) }}</div>
+                            <div class="ep-name">{{ ep.episode_name || ep.name }}</div>
+                        </div>
                         <span v-if="ep.watched" class="ep-watched">✓</span>
                         <button class="ep-play" @click="playEpisode(ep)">▶</button>
                     </li>
@@ -188,6 +283,8 @@ function playEpisode(ep: Episode) {
 </template>
 
 <style scoped>
+/* ... все стили как были + новые для .ep-thumb / .ep-info / .ep-thumb-placeholder ... */
+
 .detail {
     position: relative;
     min-height: 100vh;
@@ -195,14 +292,12 @@ function playEpisode(ep: Episode) {
     padding-bottom: 4rem;
 }
 
-/* Hero */
 .detail-hero {
     position: relative;
     padding: 2rem 4rem 0;
     margin-bottom: 2rem;
 }
 
-/* Backdrop: размытый постер, растянут на всю ширину блока hero */
 .hero-backdrop {
     position: absolute;
     top: 0;
@@ -232,7 +327,6 @@ function playEpisode(ep: Episode) {
     margin: 0 auto;
 }
 
-/* Постер */
 .hero-poster {
     flex: 0 0 240px;
     aspect-ratio: 2 / 3;
@@ -280,6 +374,12 @@ function playEpisode(ep: Episode) {
 .hero-rating {
     color: #ffd166;
     font-size: 1.1rem;
+    margin-bottom: 1rem;
+}
+
+.hero-progress {
+    color: #aaa;
+    font-size: 0.95rem;
     margin-bottom: 1rem;
 }
 
@@ -349,7 +449,6 @@ function playEpisode(ep: Episode) {
     max-width: 720px;
 }
 
-/* Episodes */
 .detail-body {
     max-width: 1400px;
     margin: 2rem auto 0;
@@ -387,21 +486,45 @@ function playEpisode(ep: Episode) {
     background: #1e2127;
 }
 
+.ep-thumb {
+    flex: 0 0 120px;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #1e2127;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #4a4f58;
+    font-size: 1.2rem;
+}
+
+.ep-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.ep-info {
+    flex: 1;
+    min-width: 0;
+}
+
 .ep-number {
     font-weight: 600;
-    min-width: 80px;
     color: #4a9eff;
     font-family: monospace;
+    font-size: 0.85rem;
 }
 
 .ep-name {
-    font-size: 0.85rem;
-    color: #888;
-    font-family: monospace;
+    font-size: 0.9rem;
+    color: #ccc;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    margin-right: auto;
+    margin-top: 0.15rem;
 }
 
 .ep-play {
@@ -428,7 +551,6 @@ function playEpisode(ep: Episode) {
     color: #4a9eff;
 }
 
-/* Close button */
 .detail-close {
     position: fixed;
     top: 1.5rem;
@@ -446,12 +568,6 @@ function playEpisode(ep: Episode) {
 
 .detail-close:hover {
     background: #2a2e35;
-}
-
-.hero-progress {
-    color: #aaa;
-    font-size: 0.95rem;
-    margin-bottom: 1rem;
 }
 
 .hero-backdrop::after {

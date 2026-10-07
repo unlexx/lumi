@@ -44,6 +44,10 @@ pub struct MediaItem {
     pub parsed_year: Option<u32>,
     pub season: Option<u32>,
     pub episode: Option<u32>,
+    pub episode_name: Option<String>,
+    pub episode_overview: Option<String>,
+    pub episode_still_path: Option<String>,
+    pub episode_meta_fetched: bool,
     pub scanned_at: i64,
     pub updated_at: i64,
 }
@@ -88,6 +92,12 @@ pub fn posters_dir() -> PathBuf {
     posters
 }
 
+pub fn episode_stills_dir() -> PathBuf {
+    let dir = posters_dir().join("episodes");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
 pub fn init_db() -> SqlResult<Connection> {
     let conn = Connection::open(db_path())?;
     conn.execute(
@@ -107,6 +117,10 @@ pub fn init_db() -> SqlResult<Connection> {
     parsed_year INTEGER,
     season INTEGER,
     episode INTEGER,
+    episode_name TEXT,
+    episode_overview TEXT,
+    episode_still_path TEXT,
+    episode_meta_fetched INTEGER NOT NULL DEFAULT 0,
     scanned_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 )",
@@ -245,6 +259,7 @@ pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
     conn.query_row(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
+       episode_name, episode_overview, episode_still_path, episode_meta_fetched,
                 scanned_at, updated_at
          FROM media_items WHERE uid = ?1",
         rusqlite::params![uid],
@@ -265,8 +280,12 @@ pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
                 parsed_year: row.get(12)?,
                 season: row.get(13)?,
                 episode: row.get(14)?,
-                scanned_at: row.get(15)?,
-                updated_at: row.get(16)?,
+                episode_name: row.get(15)?,
+                episode_overview: row.get(16)?,
+                episode_still_path: row.get(17)?,
+                episode_meta_fetched: row.get::<_, i64>(18)? != 0,
+                scanned_at: row.get(19)?,
+                updated_at: row.get(20)?,
             })
         },
     )
@@ -279,8 +298,9 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
         "INSERT OR REPLACE INTO media_items
          (uid, path, name, media_type, tmdb_id, title, original_title, overview,
           poster_path, rating, release_date, parsed_title, parsed_year, season,
-          episode, scanned_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+          episode,
+       episode_name, episode_overview, episode_still_path, episode_meta_fetched, scanned_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         rusqlite::params![
             item.uid,
             item.path,
@@ -297,6 +317,10 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.parsed_year,
             item.season,
             item.episode,
+            item.episode_name,
+            item.episode_overview,
+            item.episode_still_path,
+            if item.episode_meta_fetched { 1i64 } else { 0i64 },
             item.scanned_at,
             item.updated_at,
         ],
@@ -391,6 +415,7 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
+       episode_name, episode_overview, episode_still_path, episode_meta_fetched,
                 scanned_at, updated_at
          FROM media_items",
     ) {
@@ -415,8 +440,12 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
             parsed_year: row.get(12)?,
             season: row.get(13)?,
             episode: row.get(14)?,
-            scanned_at: row.get(15)?,
-            updated_at: row.get(16)?,
+            episode_name: row.get(15)?,
+            episode_overview: row.get(16)?,
+            episode_still_path: row.get(17)?,
+            episode_meta_fetched: row.get::<_, i64>(18)? != 0,
+            scanned_at: row.get(19)?,
+            updated_at: row.get(20)?,
         })
     });
 
@@ -430,6 +459,7 @@ pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
+       episode_name, episode_overview, episode_still_path, episode_meta_fetched,
                 scanned_at, updated_at
          FROM media_items
          WHERE tmdb_id IS NULL",
@@ -455,8 +485,12 @@ pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
             parsed_year: row.get(12)?,
             season: row.get(13)?,
             episode: row.get(14)?,
-            scanned_at: row.get(15)?,
-            updated_at: row.get(16)?,
+            episode_name: row.get(15)?,
+            episode_overview: row.get(16)?,
+            episode_still_path: row.get(17)?,
+            episode_meta_fetched: row.get::<_, i64>(18)? != 0,
+            scanned_at: row.get(19)?,
+            updated_at: row.get(20)?,
         })
     });
 
@@ -471,4 +505,28 @@ fn now_ts() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+pub fn update_episode_meta(
+    conn: &Connection,
+    uid: &str,
+    episode_name: Option<&str>,
+    episode_overview: Option<&str>,
+    episode_still_path: Option<&str>,
+) -> SqlResult<()> {
+    let now = now_ts();
+    conn.execute(
+        "UPDATE media_items
+         SET episode_name = ?1, episode_overview = ?2, episode_still_path = ?3,
+             episode_meta_fetched = 1, updated_at = ?4
+         WHERE uid = ?5",
+        rusqlite::params![
+            episode_name,
+            episode_overview,
+            episode_still_path,
+            now,
+            uid,
+        ],
+    )?;
+    Ok(())
 }

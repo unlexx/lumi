@@ -44,6 +44,14 @@ pub struct TmdbSearchResult {
     pub year: Option<u32>,
 }
 
+#[derive(Serialize, Clone)]
+pub struct EpisodeMeta {
+    pub name: Option<String>,
+    pub overview: Option<String>,
+    pub still_url: Option<String>,      // полный URL на TMDB (w300)
+    pub still_path: Option<String>,     // /abc123.jpg — для локального кэша
+}
+
 #[tauri::command]
 pub async fn get_poster(tmdb_id: u32, poster_path: String) -> Result<String, String> {
     let posters_dir = cache::posters_dir();
@@ -420,4 +428,104 @@ pub async fn fetch_poster_preview(url: String) -> Result<String, String> {
     let encoded = general_purpose::STANDARD.encode(&bytes);
 
     Ok(format!("data:image/jpeg;base64,{}", encoded))
+}
+
+#[tauri::command]
+pub async fn fetch_episode_meta(
+    tmdb_id: u32,
+    season: u32,
+    episode: u32,
+    uid: String,
+    state: tauri::State<'_, crate::cache::AppState>,
+) -> Result<EpisodeMeta, String> {
+    let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
+    let client = build_client().map_err(|e| e.to_string())?;
+
+    let url = format!(
+        "https://api.themoviedb.org/3/tv/{}/season/{}/episode/{}?api_key={}&language=ru-RU",
+        tmdb_id, season, episode, api_key
+    );
+
+    crate::log_info!("  → TMDB episode meta: tv={} s{}e{}", tmdb_id, season, episode);
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("TMDB status: {}", response.status()));
+    }
+
+    let raw: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    let name = raw["name"].as_str().map(|s| s.to_string());
+    let overview = raw["overview"].as_str().map(|s| s.to_string());
+    let still_path = raw["still_path"].as_str().map(|s| s.to_string());
+    let still_url = still_path
+        .as_ref()
+        .map(|p| format!("https://image.tmdb.org/t/p/w300{}", p));
+
+    let meta = EpisodeMeta {
+        name: name.clone(),
+        overview: overview.clone(),
+        still_url,
+        still_path: still_path.clone(),
+    };
+
+    // Сохраняем в БД
+    let conn = state.conn();
+    crate::cache::update_episode_meta(
+        &conn,
+        &uid,
+        name.as_deref(),
+        overview.as_deref(),
+        still_path.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(meta)
+}
+
+#[tauri::command]
+pub async fn get_episode_still(
+    tmdb_id: u32,
+    season: u32,
+    episode: u32,
+    still_path: String,
+) -> Result<String, String> {
+    let dir = cache::episode_stills_dir();
+    let file_path = dir.join(format!("{}_{}_{}.jpg", tmdb_id, season, episode));
+
+    if file_path.exists() {
+        crate::log_info!("  → Episode still cache HIT: {} s{}e{}", tmdb_id, season, episode);
+        return Ok(file_path.to_string_lossy().to_string());
+    }
+
+    crate::log_info!("  → Episode still cache MISS: {} s{}e{}", tmdb_id, season, episode);
+    let url = format!("https://image.tmdb.org/t/p/w300{}", still_path);
+
+    let client = build_client().map_err(|e| e.to_string())?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP status: {}", response.status()));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Read error: {}", e))?;
+
+    std::fs::write(&file_path, &bytes).map_err(|e| format!("Write error: {}", e))?;
+
+    Ok(file_path.to_string_lossy().to_string())
 }

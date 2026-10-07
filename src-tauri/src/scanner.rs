@@ -56,6 +56,11 @@ pub struct Episode {
     pub watched: bool,
     pub position: Option<f64>,
     pub duration: Option<f64>,
+    pub episode_name: Option<String>,
+    pub episode_overview: Option<String>,
+    pub episode_still_path: Option<String>,
+    pub episode_still_local: Option<String>,
+    pub episode_meta_fetched: bool,
 }
 
 #[derive(Serialize)]
@@ -216,6 +221,10 @@ pub async fn scan_all(
                     parsed_year,
                     season,
                     episode,
+                    episode_name: None,
+                    episode_overview: None,
+                    episode_still_path: None,
+                    episode_meta_fetched: false,
                     scanned_at: now,
                     updated_at: now,
                 };
@@ -446,6 +455,18 @@ fn build_tv_shows(items: &[crate::cache::MediaItem], conn: &Connection) -> Vec<T
 
             let watch = crate::cache::get_watch_info(conn, &ep.path); // ← напрямую
 
+            let still_local = if ep.episode_still_path.is_some() {
+                let tmdb = tmdb_id.unwrap();
+                let path = crate::cache::episode_stills_dir()
+                    .join(format!("{}_{}_{}.jpg", tmdb, season_num, episode_num));
+                if path.exists() {
+                    Some(path.to_string_lossy().to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             seasons_map.entry(season_num).or_default().push(Episode {
                 uid: ep.uid.clone(),
                 number: episode_num,
@@ -455,6 +476,11 @@ fn build_tv_shows(items: &[crate::cache::MediaItem], conn: &Connection) -> Vec<T
                 watched: watch.watched,
                 position: watch.position,
                 duration: watch.duration,
+                episode_name: ep.episode_name.clone(),
+                episode_overview: ep.episode_overview.clone(),
+                episode_still_path: ep.episode_still_path.clone(),
+                episode_still_local: still_local,
+                episode_meta_fetched: ep.episode_meta_fetched,
             });
         }
 
