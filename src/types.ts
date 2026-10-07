@@ -38,6 +38,11 @@ export interface Episode {
   watched: boolean
   position: number | null
   duration: number | null
+  episode_name: string | null
+  episode_overview: string | null
+  episode_still_local: string | null
+  episode_still_path: string | null
+  episode_meta_fetched: boolean
 }
 
 export interface Season {

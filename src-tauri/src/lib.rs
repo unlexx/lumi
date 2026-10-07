@@ -37,6 +37,8 @@ pub fn run() {
             tmdb::search_tmdb_manual,
             tmdb::apply_tmdb_match,
             tmdb::fetch_poster_preview,
+            tmdb::fetch_episode_meta,
+            tmdb::get_episode_still,
             toggle_fullscreen,
         ])
         .run(tauri::generate_context!())
