@@ -2,16 +2,35 @@
 import { ref } from 'vue'
 import Settings from './views/Settings.vue'
 import LibraryView from './views/LibraryView.vue'
+import DetailView from './views/DetailView.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import '@/styles/modal.css'
+import type { VideoFile, TvShow } from '@/types'
+import { usePlayer } from '@/composables/usePlayer'
 
-const currentView = ref<'library' | 'settings'>('library')
+const currentView = ref<'library' | 'settings' | 'detail'>('library')
+const detailItem = ref<VideoFile | TvShow | null>(null)
+const { play } = usePlayer()
+
+function openDetail(item: VideoFile | TvShow) {
+  detailItem.value = item
+  currentView.value = 'detail'
+}
+
+function closeDetail() {
+  detailItem.value = null
+  currentView.value = 'library'
+}
 
 useKeyboard({ currentView, withFullscreen: true })
 </script>
 
 <template>
-  <main class="app">
+  <!-- Detail view: полный экран, без padding и toolbar -->
+  <DetailView v-if="currentView === 'detail' && detailItem" :item="detailItem" @close="closeDetail" />
+
+  <!-- Library / Settings: обычный layout с toolbar -->
+  <main v-else class="app">
     <header class="toolbar">
       <div class="header-left">
         <button v-if="currentView === 'settings'" class="back-arrow" @click="currentView = 'library'"
@@ -31,7 +50,7 @@ useKeyboard({ currentView, withFullscreen: true })
     </header>
 
     <Settings v-if="currentView === 'settings'" />
-    <LibraryView v-else />
+    <LibraryView v-else @open-movie="openDetail" @open-show="openDetail" />
   </main>
 </template>
 

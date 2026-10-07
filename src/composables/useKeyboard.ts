@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Ref } from 'vue'
 
 interface KeyboardOptions {
-  currentView?: Ref<'library' | 'settings'>
+  currentView?: Ref<'library' | 'settings' | 'detail'>
   onEscape?: () => void
   withFullscreen?: boolean
 }
