@@ -1,7 +1,32 @@
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
+pub struct AppState {
+    pub conn: Mutex<Connection>,
+}
+
+impl AppState {
+    /// Инициализировать БД один раз при старте приложения.
+    /// Открывает соединение, создаёт схему, заворачивает в Mutex.
+    pub fn init() -> SqlResult<Self> {
+        let conn = init_db()?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
+    }
+
+    /// Взять блокировку. Паникует, если мьютекс отравлен
+    /// (кто-то запаниковал, держа соединение).
+    ///
+    /// ВАЖНО: не держать guard между `.await` — `MutexGuard` не `Send`.
+    pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().expect("SQLite mutex poisoned")
+    }
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MediaItem {
     pub uid: String,
