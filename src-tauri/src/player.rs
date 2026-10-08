@@ -4,23 +4,6 @@ use crate::mpv;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
-/// RAII-guard: гарантирует сброс флага player_active при выходе из области,
-/// включая панику. Сбрасывается раньше, чем `child.kill()`/`drop`.
-struct PlayerActiveGuard<'a>(&'a AppState);
-
-impl<'a> PlayerActiveGuard<'a> {
-    fn new(state: &'a AppState) -> Self {
-        state.set_player_active(true);
-        Self(state)
-    }
-}
-
-impl<'a> Drop for PlayerActiveGuard<'a> {
-    fn drop(&mut self) {
-        self.0.set_player_active(false);
-    }
-}
-
 /// RAII-guard: гарантирует сброс player_active и зачистку mpv_child
 /// при выходе из области, включая панику.
 struct PlayerSession<'a> {
@@ -69,7 +52,13 @@ fn play_and_track(
     let state = app.state::<AppState>();
     let _session = PlayerSession::new(&state);
 
-    let child = mpv::launch(file_path, start_position)?;
+    // Читаем player_path, отпускаем lock сразу
+    let player_path: Option<String> = {
+        let s = state.settings();
+        s.player_path.clone()
+    };
+
+    let child = mpv::launch(file_path, start_position, player_path.as_deref())?;
     state.set_mpv_child(child);
 
     std::thread::sleep(Duration::from_millis(2000));
