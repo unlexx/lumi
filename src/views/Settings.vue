@@ -10,13 +10,66 @@ interface FolderConfig {
   type: MediaType
 }
 
+interface AppSettings {
+  player_path: string | null
+  proxy_url: string | null
+}
+
 const folders = ref<FolderConfig[]>([])
 const newType = ref<MediaType>('movie')
 const error = ref<string | null>(null)
 const emit = defineEmits<{ (e: 'back'): void }>()
 
+// --- Application settings ---
+const settings = ref<AppSettings>({ player_path: null, proxy_url: null })
+const settingsError = ref<string | null>(null)
+const settingsSaved = ref(false)
+const saving = ref(false)
+const proxyInput = ref<string>('')
+
 async function loadFolders() {
   folders.value = await invoke<FolderConfig[]>('get_folders')
+}
+
+async function loadSettings() {
+  try {
+    settings.value = await invoke<AppSettings>('get_settings')
+    proxyInput.value = proxyUrlToInput(settings.value.proxy_url)
+    settingsError.value = null
+  } catch (e) {
+    settingsError.value = String(e)
+  }
+}
+
+async function pickPlayer() {
+  const path = await open({
+    multiple: false,
+    title: 'Выберите исполняемый файл плеера',
+    filters: [{ name: 'Executable', extensions: ['exe', 'bin', 'app'] }]
+  })
+  if (!path || Array.isArray(path)) return
+  settings.value.player_path = path
+  settingsSaved.value = false
+}
+
+async function saveSettings() {
+  saving.value = true
+  settingsSaved.value = false
+  try {
+    const payload: AppSettings = {
+      player_path: settings.value.player_path,
+      proxy_url: inputToProxyUrl(proxyInput.value)
+    }
+    settings.value = await invoke<AppSettings>('update_settings', { settings: payload })
+    proxyInput.value = proxyUrlToInput(settings.value.proxy_url)
+    settingsError.value = null
+    settingsSaved.value = true
+    setTimeout(() => (settingsSaved.value = false), 2000)
+  } catch (e) {
+    settingsError.value = String(e)
+  } finally {
+    saving.value = false
+  }
 }
 
 async function addFolder() {
@@ -42,7 +95,29 @@ async function removeFolder(path: string) {
   folders.value = await invoke<FolderConfig[]>('remove_folder', { path })
 }
 
-onMounted(loadFolders)
+/**
+ * Превращает сохранённый URL socks5h://host:port в host:port для UI.
+ * Если формат неожиданный — возвращает как есть (лучше показать, чем молча потерять).
+ */
+function proxyUrlToInput(url: string | null): string {
+  if (!url) return ''
+  const prefix = 'socks5h://'
+  return url.startsWith(prefix) ? url.slice(prefix.length) : url
+}
+
+function inputToProxyUrl(input: string | null): string | null {
+  const trimmed = (input ?? '').trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('socks5h://') || trimmed.startsWith('socks5://')) {
+    return trimmed.replace(/^socks5:\/\//, 'socks5h://')
+  }
+  return `socks5h://${trimmed}`
+}
+
+onMounted(() => {
+  loadFolders()
+  loadSettings()
+})
 </script>
 
 <template>
@@ -59,9 +134,6 @@ onMounted(loadFolders)
         <button @click="addFolder">Выбрать папку</button>
       </div>
     </section>
-
-    <p v-if="error" class="error">{{ error }}</p>
-
     <section class="list-section">
       <h3>Папки в библиотеке</h3>
       <p v-if="!folders.length" class="empty">Пока нет добавленных папок</p>
@@ -77,6 +149,37 @@ onMounted(loadFolders)
         </li>
       </ul>
     </section>
+    <p v-if="error" class="error">{{ error }}</p>
+    <section class="app-settings">
+      <h3>Настройки приложения</h3>
+
+      <div class="field">
+        <label>Путь к плееру</label>
+        <div class="row">
+          <input type="text" :value="settings.player_path ?? ''" placeholder="mpv (из PATH) — оставьте пустым"
+            @input="settings.player_path = ($event.target as HTMLInputElement).value || null; settingsSaved = false" />
+          <button @click="pickPlayer">Выбрать…</button>
+        </div>
+        <small>Если пусто — используется <code>mpv</code> из PATH.</small>
+      </div>
+
+      <div class="field">
+        <label>Прокси SOCKS5 для TMDB</label>
+        <input type="text" v-model="proxyInput" placeholder="127.0.0.1:9090 — оставьте пустым, чтобы отключить"
+          @input="settingsSaved = false" />
+        <small>
+          Формат: <code>host:port</code>. Используется схема <code>socks5h://</code> (DNS через прокси).
+        </small>
+      </div>
+
+      <div class="actions">
+        <button class="save" :disabled="saving" @click="saveSettings">
+          {{ saving ? 'Сохранение…' : 'Сохранить' }}
+        </button>
+        <span v-if="settingsSaved" class="ok">Сохранено</span>
+        <span v-if="settingsError" class="error">{{ settingsError }}</span>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -84,20 +187,24 @@ onMounted(loadFolders)
 .settings {
   max-width: 800px;
 }
+
 h2 {
   margin-top: 0;
 }
+
 h3 {
   margin: 1.5rem 0 0.75rem;
   font-size: 1rem;
   color: #aaa;
   font-weight: 500;
 }
+
 .add-row {
   display: flex;
   gap: 0.75rem;
   align-items: center;
 }
+
 select {
   background: #2a2e35;
   color: #e6e6e6;
@@ -106,6 +213,7 @@ select {
   border-radius: 6px;
   font-size: 0.9rem;
 }
+
 button {
   background: #2a2e35;
   color: #e6e6e6;
@@ -115,20 +223,25 @@ button {
   cursor: pointer;
   font-size: 0.9rem;
 }
+
 button:hover {
   background: #353a42;
 }
+
 .error {
   color: #ff6b6b;
 }
+
 .empty {
   color: #666;
 }
+
 .folders {
   list-style: none;
   padding: 0;
   margin: 0;
 }
+
 .folders li {
   display: flex;
   justify-content: space-between;
@@ -136,26 +249,31 @@ button:hover {
   padding: 0.75rem 0;
   border-bottom: 1px solid #2a2e35;
 }
+
 .folder-info {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   min-width: 0;
 }
+
 .badge {
   padding: 0.2rem 0.6rem;
   border-radius: 4px;
   font-size: 0.75rem;
   flex-shrink: 0;
 }
+
 .badge.movie {
   background: #2d4a6b;
   color: #9dc7f0;
 }
+
 .badge.tv_shows {
   background: #4a2d6b;
   color: #c79df0;
 }
+
 .path {
   font-family: monospace;
   font-size: 0.85rem;
@@ -164,6 +282,7 @@ button:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .remove {
   background: transparent;
   border: 1px solid #4a2d2d;
@@ -171,7 +290,83 @@ button:hover {
   padding: 0.3rem 0.75rem;
   font-size: 0.8rem;
 }
+
 .remove:hover {
   background: #4a2d2d;
+}
+
+.app-settings {
+  margin-bottom: 2rem;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-bottom: 0.35rem;
+}
+
+.field .row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.field input[type="text"] {
+  flex: 1;
+  background: #2a2e35;
+  color: #e6e6e6;
+  border: 1px solid #3a3f47;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: monospace;
+}
+
+.field input[type="text"]:focus {
+  outline: none;
+  border-color: #5a6270;
+}
+
+.field small {
+  display: block;
+  color: #666;
+  font-size: 0.78rem;
+  margin-top: 0.3rem;
+}
+
+.field code {
+  background: #2a2e35;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.save {
+  background: #2d4a6b;
+  border-color: #3d5a7b;
+}
+
+.save:hover:not(:disabled) {
+  background: #35577b;
+}
+
+.save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ok {
+  color: #6bcf6b;
+  font-size: 0.85rem;
 }
 </style>

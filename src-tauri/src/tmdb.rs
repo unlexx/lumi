@@ -48,15 +48,22 @@ pub struct TmdbSearchResult {
 pub struct EpisodeMeta {
     pub name: Option<String>,
     pub overview: Option<String>,
-    pub still_url: Option<String>,      // полный URL на TMDB (w300)
-    pub still_path: Option<String>,     // /abc123.jpg — для локального кэша
+    pub still_url: Option<String>,  // полный URL на TMDB (w300)
+    pub still_path: Option<String>, // /abc123.jpg — для локального кэша
 }
 
 #[tauri::command]
-pub async fn get_poster(tmdb_id: u32, poster_path: String) -> Result<String, String> {
+pub async fn get_poster(
+    state: tauri::State<'_, cache::AppState>,
+    tmdb_id: u32,
+    poster_path: String,
+) -> Result<String, String> {
     let posters_dir = cache::posters_dir();
     let file_path = posters_dir.join(format!("{}.jpg", tmdb_id));
-
+    let proxy_url = {
+        let s = state.settings();
+        s.proxy_url.clone()
+    };
     // Если уже скачан — возвращаем путь
     if file_path.exists() {
         crate::log_info!("  → Poster cache HIT: {}", tmdb_id);
@@ -67,7 +74,7 @@ pub async fn get_poster(tmdb_id: u32, poster_path: String) -> Result<String, Str
     crate::log_info!("  → Poster cache MISS: {}, downloading...", tmdb_id);
     let url = format!("https://image.tmdb.org/t/p/w500{}", poster_path);
 
-    let client = build_client().map_err(|e| e.to_string())?;
+    let client = build_client(proxy_url.as_deref())?;
     let response = client
         .get(&url)
         .send()
@@ -88,13 +95,18 @@ pub async fn get_poster(tmdb_id: u32, poster_path: String) -> Result<String, Str
     Ok(file_path.to_string_lossy().to_string())
 }
 
-pub fn build_client() -> Result<Client, reqwest::Error> {
-    let proxy = reqwest::Proxy::all("socks5h://127.0.0.1:9090")?;
+pub fn build_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
 
-    Client::builder()
-        .proxy(proxy)
-        .user_agent("Lumi/0.1.0")
+    if let Some(url) = proxy_url {
+        let proxy = reqwest::Proxy::all(url)
+            .map_err(|e| format!("Некорректный прокси '{}': {}", url, e))?;
+        builder = builder.proxy(proxy);
+    }
+
+    builder
         .build()
+        .map_err(|e| format!("Не удалось создать HTTP-клиент: {}", e))
 }
 
 /// Ищет фильм в TMDB по названию. Год используется только для выбора
@@ -227,11 +239,16 @@ pub async fn get_or_fetch_tv(
 
 #[tauri::command]
 pub async fn search_tmdb_manual(
+    state: tauri::State<'_, cache::AppState>,
     query: String,
     media_type: String,
 ) -> Result<Vec<TmdbSearchResult>, String> {
     let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
-    let client = build_client().map_err(|e| e.to_string())?;
+    let proxy_url = {
+        let s = state.settings();
+        s.proxy_url.clone()
+    };
+    let client = build_client(proxy_url.as_deref())?;
 
     let endpoint = match media_type.as_str() {
         "movie" => "movie",
@@ -325,7 +342,11 @@ pub async fn apply_tmdb_match(
     }
 
     let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
-    let client = build_client().map_err(|e| e.to_string())?;
+    let proxy_url = {
+        let s = state.settings();
+        s.proxy_url.clone()
+    };
+    let client = build_client(proxy_url.as_deref())?;
 
     let endpoint = match media_type.as_str() {
         "movie" => "movie",
@@ -406,8 +427,15 @@ pub async fn apply_tmdb_match(
 }
 
 #[tauri::command]
-pub async fn fetch_poster_preview(url: String) -> Result<String, String> {
-    let client = build_client().map_err(|e| e.to_string())?;
+pub async fn fetch_poster_preview(
+    state: tauri::State<'_, cache::AppState>,
+    url: String,
+) -> Result<String, String> {
+    let proxy_url = {
+        let s = state.settings();
+        s.proxy_url.clone()
+    };
+    let client = build_client(proxy_url.as_deref())?;
 
     let response = client
         .get(&url)
@@ -439,14 +467,23 @@ pub async fn fetch_episode_meta(
     state: tauri::State<'_, crate::cache::AppState>,
 ) -> Result<EpisodeMeta, String> {
     let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set")?;
-    let client = build_client().map_err(|e| e.to_string())?;
+    let proxy_url = {
+        let s = state.settings();
+        s.proxy_url.clone()
+    };
+    let client = build_client(proxy_url.as_deref())?;
 
     let url = format!(
         "https://api.themoviedb.org/3/tv/{}/season/{}/episode/{}?api_key={}&language=ru-RU",
         tmdb_id, season, episode, api_key
     );
 
-    crate::log_info!("  → TMDB episode meta: tv={} s{}e{}", tmdb_id, season, episode);
+    crate::log_info!(
+        "  → TMDB episode meta: tv={} s{}e{}",
+        tmdb_id,
+        season,
+        episode
+    );
 
     let response = client
         .get(&url)
@@ -493,6 +530,7 @@ pub async fn fetch_episode_meta(
 
 #[tauri::command]
 pub async fn get_episode_still(
+    state: tauri::State<'_, cache::AppState>,
     tmdb_id: u32,
     season: u32,
     episode: u32,
@@ -502,14 +540,28 @@ pub async fn get_episode_still(
     let file_path = dir.join(format!("{}_{}_{}.jpg", tmdb_id, season, episode));
 
     if file_path.exists() {
-        crate::log_info!("  → Episode still cache HIT: {} s{}e{}", tmdb_id, season, episode);
+        crate::log_info!(
+            "  → Episode still cache HIT: {} s{}e{}",
+            tmdb_id,
+            season,
+            episode
+        );
         return Ok(file_path.to_string_lossy().to_string());
     }
 
-    crate::log_info!("  → Episode still cache MISS: {} s{}e{}", tmdb_id, season, episode);
+    crate::log_info!(
+        "  → Episode still cache MISS: {} s{}e{}",
+        tmdb_id,
+        season,
+        episode
+    );
     let url = format!("https://image.tmdb.org/t/p/w300{}", still_path);
 
-    let client = build_client().map_err(|e| e.to_string())?;
+    let proxy_url = {
+        let s = state.settings();
+        s.proxy_url.clone()
+    };
+    let client = build_client(proxy_url.as_deref())?;
     let response = client
         .get(&url)
         .send()

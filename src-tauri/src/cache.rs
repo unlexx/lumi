@@ -1,28 +1,113 @@
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+use crate::settings::AppSettings;
 
 pub struct AppState {
     pub conn: Mutex<Connection>,
+    settings: Mutex<AppSettings>,
+    pub player_active: AtomicBool,
+    pub mpv_child: Mutex<Option<Child>>,
+}
+
+static PORTABLE: OnceLock<bool> = OnceLock::new();
+
+pub fn set_portable(v: bool) {
+    let _ = PORTABLE.set(v);
+}
+
+pub fn is_portable() -> bool {
+    *PORTABLE.get().unwrap_or(&false)
+}
+
+/// Директория, где лежит исполняемый файл.
+/// None — если ОС не дала ответ (крайне редко).
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
+
+/// Корень portable-режима: <exe_dir>/lumi-data/
+fn portable_root() -> PathBuf {
+    exe_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("lumi-data")
 }
 
 impl AppState {
-    /// Инициализировать БД один раз при старте приложения.
-    /// Открывает соединение, создаёт схему, заворачивает в Mutex.
     pub fn init() -> SqlResult<Self> {
         let conn = init_db()?;
+        let settings = crate::settings::load_settings();
         Ok(Self {
             conn: Mutex::new(conn),
+            settings: Mutex::new(settings),
+            player_active: AtomicBool::new(false),
+            mpv_child: Mutex::new(None),
         })
     }
 
-    /// Взять блокировку. Паникует, если мьютекс отравлен
-    /// (кто-то запаниковал, держа соединение).
-    ///
-    /// ВАЖНО: не держать guard между `.await` — `MutexGuard` не `Send`.
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().expect("SQLite mutex poisoned")
+    }
+
+    pub fn settings(&self) -> std::sync::MutexGuard<'_, AppSettings> {
+        self.settings.lock().expect("settings mutex poisoned")
+    }
+
+    pub fn set_player_active(&self, v: bool) {
+        self.player_active.store(v, Ordering::SeqCst);
+    }
+
+    pub fn is_player_active(&self) -> bool {
+        self.player_active.load(Ordering::SeqCst)
+    }
+
+    /// Кладёт child mpv в state. Старый (если был) — убивается.
+    pub fn set_mpv_child(&self, child: Child) {
+        let mut guard = self.mpv_child.lock().expect("mpv_child mutex poisoned");
+        if let Some(mut old) = guard.take() {
+            let _ = old.kill();
+        }
+        *guard = Some(child);
+    }
+
+    /// Забирает child mpv из state.
+    pub fn take_mpv_child(&self) -> Option<Child> {
+        self.mpv_child
+            .lock()
+            .expect("mpv_child mutex poisoned")
+            .take()
+    }
+}
+
+/// Корень для settings.json / folders.json.
+/// Portable → <exe_dir>/lumi-data/; иначе → ProjectDirs::config_dir().
+pub fn config_root() -> PathBuf {
+    if is_portable() {
+        let dir = portable_root();
+        std::fs::create_dir_all(&dir).ok();
+        dir
+    } else {
+        project_dirs().config_dir().to_path_buf()
+    }
+}
+
+/// Корень для cache.db и posters/.
+/// Portable → <exe_dir>/lumi-data/; иначе → ProjectDirs::data_dir().
+pub fn data_root() -> PathBuf {
+    if is_portable() {
+        let dir = portable_root();
+        std::fs::create_dir_all(&dir).ok();
+        dir
+    } else {
+        let dir = project_dirs().data_dir().to_path_buf();
+        std::fs::create_dir_all(&dir).ok();
+        dir
     }
 }
 
@@ -78,16 +163,22 @@ pub fn project_dirs() -> ProjectDirs {
 }
 
 pub fn db_path() -> PathBuf {
-    let dirs = project_dirs();
-    let data_dir = dirs.data_dir();
-    std::fs::create_dir_all(data_dir).ok();
-    data_dir.join("cache.db")
+    let dir = data_root();
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("cache.db")
 }
 
 pub fn posters_dir() -> PathBuf {
-    let dirs = project_dirs();
-    let cache_dir = dirs.cache_dir();
-    let posters = cache_dir.join("posters");
+    // В обычном режиме posters лежат в cache_dir (как было раньше),
+    // в portable — в data_root/posters.
+    let base = if is_portable() {
+        data_root()
+    } else {
+        let cache_dir = project_dirs().cache_dir().to_path_buf();
+        std::fs::create_dir_all(&cache_dir).ok();
+        cache_dir
+    };
+    let posters = base.join("posters");
     std::fs::create_dir_all(&posters).ok();
     posters
 }
@@ -520,13 +611,7 @@ pub fn update_episode_meta(
          SET episode_name = ?1, episode_overview = ?2, episode_still_path = ?3,
              episode_meta_fetched = 1, updated_at = ?4
          WHERE uid = ?5",
-        rusqlite::params![
-            episode_name,
-            episode_overview,
-            episode_still_path,
-            now,
-            uid,
-        ],
+        rusqlite::params![episode_name, episode_overview, episode_still_path, now, uid,],
     )?;
     Ok(())
 }

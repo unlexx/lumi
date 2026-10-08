@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import Settings from './views/Settings.vue'
 import LibraryView from './views/LibraryView.vue'
 import DetailView from './views/DetailView.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import '@/styles/modal.css'
 import type { VideoFile, TvShow } from '@/types'
@@ -10,6 +12,8 @@ import { usePlayer } from '@/composables/usePlayer'
 
 const currentView = ref<'library' | 'settings' | 'detail'>('library')
 const detailItem = ref<VideoFile | TvShow | null>(null)
+const showExitConfirm = ref(false)
+const playerActive = ref(false)
 const { play } = usePlayer()
 
 function openDetail(item: VideoFile | TvShow) {
@@ -22,7 +26,24 @@ function closeDetail() {
   currentView.value = 'library'
 }
 
-useKeyboard({ currentView, withFullscreen: true })
+async function onEscape() {
+  if (currentView.value === 'detail') {
+    closeDetail()
+    return
+  }
+  try {
+    playerActive.value = await invoke<boolean>('is_player_active')
+  } catch {
+    playerActive.value = false
+  }
+  showExitConfirm.value = true
+}
+
+function confirmExit() {
+  invoke('exit_app').catch(console.error)
+}
+
+useKeyboard({ currentView, withFullscreen: true, onEscape })
 </script>
 
 <template>
@@ -52,6 +73,11 @@ useKeyboard({ currentView, withFullscreen: true })
     <Settings v-if="currentView === 'settings'" />
     <LibraryView v-else @open-movie="openDetail" @open-show="openDetail" />
   </main>
+
+  <ConfirmDialog v-if="showExitConfirm" title="Выйти из Lumi?" :message="playerActive
+    ? 'Воспроизведение будет остановлено. Несохранённый прогресс не потеряется.'
+    : ''" confirm-label="Выйти" cancel-label="Отмена" danger @confirm="confirmExit"
+    @cancel="showExitConfirm = false" />
 </template>
 
 <style>
