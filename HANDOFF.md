@@ -6,6 +6,9 @@ Docs: ARCHITECTURE.md (актуален)
 
 ## Последнее закрытое (свежее сверху)
 
+- **LUMI-14a:** `AppSettings` (`settings.json`), portable mode через `portable.flag` → `<exe_dir>/lumi-data/`. Команды `get_settings` / `update_settings` / `exit_app` / `is_player_active`. `ConfirmDialog.vue` + модалка выхода по Escape. RAII-сессии для `player_active` и `mpv_child`, mpv не остаётся висеть при выходе.
+- **LUMI-14b:** configurable player path. `mpv::launch` принимает `player_path`, читает из `AppState`. `None` → `mpv` из PATH.
+- **LUMI-14c:** configurable SOCKS5 proxy. `proxy_url: Option<String>` (`socks5h://host:port`), UI — input `host:port`. `build_client(Option<&str>)`, `None` → без прокси. Обновление без перезапуска.
 - **LUMI-18:** эпизоды в DetailView теперь с превью-кадром (still) и названием из TMDB.
   Lazy-фетч батчами по 4 при открытии DetailView. Кэш в `media_items` + `posters/episodes/`.
 - **LUMI-17:** DetailView (полноэкранная страница) заменил `MovieModal` / `ShowModal`.
@@ -21,22 +24,7 @@ Docs: ARCHITECTURE.md (актуален)
 
 ## Текущая задача
 
-**LUMI-14: configurable player path, proxy, portable mode.**
-Разбито на три подзадачи (можно слить в один PR или в три отдельных):
 
-- **14a:** `AppSettings` (`settings.json`), portable mode (переключение
-  `db_path` / `posters_dir` / `config_path` через статический флаг),
-  `get_settings` / `update_settings`. Фундамент.
-- **14b:** configurable player path. `mpv::launch` принимает `player_path`,
-  UI в `Settings.vue` с file picker.
-- **14c:** configurable proxy URL. `tmdb::build_client` принимает `proxy_url`,
-  все TMDB-команды читают из `State<AppState>`.
-
-**Начинаем с 14a.** Файлы для старта:
-`config.rs`, `cache.rs`, `lib.rs`, `Settings.vue`, `package.json`.
-
-Открытый вопрос при старте 14a — нужен ли `Mutex<AppSettings>` в `AppState`
-или достаточно `OnceLock`, и как обновлять `proxy_url` без перезапуска.
 
 ## Соглашения
 

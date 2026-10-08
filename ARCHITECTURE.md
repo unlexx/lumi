@@ -29,7 +29,7 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 
 ### TMDB integration
 
-- Proxy: **hardcoded** `socks5h://127.0.0.1:9090` in `tmdb.rs::build_client()` (LUMI-14 will make configurable)
+- Proxy: configurable via AppSettings.proxy_url (Option<String> в формате socks5h://host:port)
 - All requests need VPN/SOCKS5
 - `.env` with `TMDB_API_KEY` in working directory
 - Posters: cached to disk, served via `convertFileSrc()`
@@ -39,14 +39,15 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 ### mpv playback
 
 - Launched with `--input-ipc-server=\\.\pipe\mpvsocket --fullscreen --keep-open=no --idle=no`
-- Player binary: `Command::new("mpv")`, resolved from PATH (LUMI-14 will make configurable)
+- Player binary: configurable via AppSettings.player_path, fallback — mpv из PATH
 - Rust polls `time-pos` and `duration` every 2s while mpv alive
 - On exit: `mark_watched` saved, `watch_status_updated` event emitted
 - Resume: `play_video(path, start_position)` → `mpv --start=<sec>`
+- Child-процесс хранится в \AppState.mpv_child`, при выходе приложения гарантированно убивается.
 
 ### SQLite connection
 
-Singleton `Mutex<Connection>` in `AppState`, registered via `tauri::Builder::manage()`.
+Singleton \Mutex<Connection>` + `Mutex<AppSettings>` + `AtomicBool player_active` + `Mutex<Option<Child>> mpv_child` в `AppState`, registered via `tauri::Builder::manage()`.
 Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 
 ## Tauri commands
@@ -71,9 +72,6 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 
 ### Next
 
-- **LUMI-14a:** `AppSettings` (`settings.json`), portable mode (backend foundation)
-- **LUMI-14b:** configurable player path (backend + UI)
-- **LUMI-14c:** configurable proxy URL (backend + UI)
 
 ### Low priority (wishlist)
 
@@ -84,6 +82,7 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 - Trailers on details page
 - Big backdrop on details page
 - Episode overview with spoiler toggle
+- Кнопка „Проверить соединение“ для прокси
 
 ### Post-release
 
@@ -137,7 +136,8 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 
 - `Blade Runner 2049` parsed as `Blade Runner` + year 2049 → wrong TMDB match
 - `uid = xxh64(file_name)` — duplicates with the same name in different folders collide; second occurrence silently skipped
-- `proxy_url`, mpv path, and data dir are hardcoded (LUMI-14 will make configurable)
+- Windows-only пайп mpv (\\.\pipe\mpvsocket`). Для macOS/Linux — `cfg(target_os)`.
+- WebView2 + Escape выбивает из fullscreen в Library при открытии ConfirmDialog. В Settings — не выбивает. Отложено.
 
 ## Conventions
 
