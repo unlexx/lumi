@@ -3,14 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { onKeyStroke } from '@vueuse/core'
 import type { VideoFile, TvShow, Episode } from '@/types'
+import { usePlayer } from '@/composables/usePlayer'
 
+const { play } = usePlayer()
 const props = defineProps<{
     item: VideoFile | TvShow
 }>()
 
 const emit = defineEmits<{
     (e: 'close'): void
-    (e: 'play', path: string, startPosition: number | null): void
 }>()
 
 onKeyStroke('Escape', (e) => {
@@ -87,17 +88,17 @@ function episodeLabel(ep: Episode): string {
 
 function playMovie() {
     if (!movie.value) return
-    emit('play', movie.value.path, null)
+    play(movie.value.path, null)
 }
 
 function resumeMovie() {
     if (!movie.value || resumeMoviePosition.value === null) return
-    emit('play', movie.value.path, resumeMoviePosition.value)
+    play(movie.value.path, resumeMoviePosition.value)
 }
 
 function playEpisode(ep: Episode) {
     const start = ep.position && ep.position > 0 ? ep.position : null
-    emit('play', ep.path, start)
+    play(ep.path, start)
 }
 
 // === LUMI-18b: episode stills ===

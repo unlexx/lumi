@@ -27,7 +27,7 @@ useKeyboard({ currentView, withFullscreen: true })
 
 <template>
   <!-- Detail view: полный экран, без padding и toolbar -->
-  <DetailView v-if="currentView === 'detail' && detailItem" :item="detailItem" @close="closeDetail" />
+  <DetailView v-if="currentView === 'detail' && detailItem" :item="detailItem" @close="closeDetail" @play="play" />
 
   <!-- Library / Settings: обычный layout с toolbar -->
   <main v-else class="app">
