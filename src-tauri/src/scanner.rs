@@ -97,7 +97,11 @@ pub async fn scan_all(
 
     let total_folders = folders.len();
     let api_key = std::env::var("TMDB_API_KEY").map_err(|_| "TMDB_API_KEY not set in .env")?;
-    let client = crate::tmdb::build_client().map_err(|e| e.to_string())?;
+    let proxy_url = {
+    let s = state.settings();
+    s.proxy_url.clone()
+};
+let client = crate::tmdb::build_client(proxy_url.as_deref()).map_err(|e| e.to_string())?;
 
     let video_extensions = ["mkv", "mp4", "avi", "mov", "wmv", "flv", "webm"];
     let mut new_uids: Vec<String> = Vec::new();

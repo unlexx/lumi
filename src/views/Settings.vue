@@ -25,6 +25,7 @@ const settings = ref<AppSettings>({ player_path: null, proxy_url: null })
 const settingsError = ref<string | null>(null)
 const settingsSaved = ref(false)
 const saving = ref(false)
+const proxyInput = ref<string>('')
 
 async function loadFolders() {
   folders.value = await invoke<FolderConfig[]>('get_folders')
@@ -33,6 +34,7 @@ async function loadFolders() {
 async function loadSettings() {
   try {
     settings.value = await invoke<AppSettings>('get_settings')
+    proxyInput.value = proxyUrlToInput(settings.value.proxy_url)
     settingsError.value = null
   } catch (e) {
     settingsError.value = String(e)
@@ -54,12 +56,12 @@ async function saveSettings() {
   saving.value = true
   settingsSaved.value = false
   try {
-    settings.value = await invoke<AppSettings>('update_settings', {
-      settings: {
-        player_path: settings.value.player_path,
-        proxy_url: settings.value.proxy_url
-      }
-    })
+    const payload: AppSettings = {
+      player_path: settings.value.player_path,
+      proxy_url: inputToProxyUrl(proxyInput.value)
+    }
+    settings.value = await invoke<AppSettings>('update_settings', { settings: payload })
+    proxyInput.value = proxyUrlToInput(settings.value.proxy_url)
     settingsError.value = null
     settingsSaved.value = true
     setTimeout(() => (settingsSaved.value = false), 2000)
@@ -91,6 +93,25 @@ async function addFolder() {
 
 async function removeFolder(path: string) {
   folders.value = await invoke<FolderConfig[]>('remove_folder', { path })
+}
+
+/**
+ * Превращает сохранённый URL socks5h://host:port в host:port для UI.
+ * Если формат неожиданный — возвращает как есть (лучше показать, чем молча потерять).
+ */
+function proxyUrlToInput(url: string | null): string {
+  if (!url) return ''
+  const prefix = 'socks5h://'
+  return url.startsWith(prefix) ? url.slice(prefix.length) : url
+}
+
+function inputToProxyUrl(input: string | null): string | null {
+  const trimmed = (input ?? '').trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('socks5h://') || trimmed.startsWith('socks5://')) {
+    return trimmed.replace(/^socks5:\/\//, 'socks5h://')
+  }
+  return `socks5h://${trimmed}`
 }
 
 onMounted(() => {
@@ -143,11 +164,12 @@ onMounted(() => {
       </div>
 
       <div class="field">
-        <label>Прокси для TMDB</label>
-        <input type="text" :value="settings.proxy_url ?? ''"
-          placeholder="socks5h://127.0.0.1:9090 — оставьте пустым, чтобы отключить"
-          @input="settings.proxy_url = ($event.target as HTMLInputElement).value || null; settingsSaved = false" />
-        <small>Формат: <code>socks5h://host:port</code> или <code>http://host:port</code>.</small>
+        <label>Прокси SOCKS5 для TMDB</label>
+        <input type="text" v-model="proxyInput" placeholder="127.0.0.1:9090 — оставьте пустым, чтобы отключить"
+          @input="settingsSaved = false" />
+        <small>
+          Формат: <code>host:port</code>. Используется схема <code>socks5h://</code> (DNS через прокси).
+        </small>
       </div>
 
       <div class="actions">
