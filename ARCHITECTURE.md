@@ -4,16 +4,20 @@
 
 Every scanned file is stored, **matched or not**. Primary key = `uid` (xxhash of file name).
 
-| Column                                                                         | Description           |
-| :----------------------------------------------------------------------------- | :-------------------- |
-| `uid`                                                                          | xxhash64(file_name)   |
-| `path`, `name`                                                                 | full path + file name |
-| `media_type`                                                                   | "movie" \| "tv_shows" |
-| `tmdb_id`                                                                      | NULL if not matched   |
-| `title`, `original_title`, `overview`, `poster_path`, `rating`, `release_date` | TMDB data             |
-| `parsed_title`, `parsed_year`                                                  | from filename parser  |
-| `season`, `episode`                                                            | for TV shows          |
-| `scanned_at`, `updated_at`                                                     | unix timestamps       |
+| Column | Description |
+| :--- | :--- |
+| `uid` | xxhash64(file_name) |
+| `path`, `name` | full path + file name |
+| `media_type` | "movie" \| "tv_shows" |
+| `tmdb_id` | NULL if not matched |
+| `title`, `original_title`, `overview`, `poster_path`, `rating`, `release_date` | TMDB data |
+| `parsed_title`, `parsed_year` | from filename parser |
+| `season`, `episode` | for TV shows |
+| `episode_name`, `episode_overview`, `episode_still_path` | TMDB episode metadata (lazy) |
+| `episode_meta_fetched` | 0/1 — whether episode metadata was fetched |
+| `scanned_at`, `updated_at` | unix timestamps |
+
+**Schema changes require wiping `cache.db`** — no migration path.
 
 ### watch_status (SQLite)
 
@@ -25,54 +29,51 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 
 ### TMDB integration
 
-- Proxy: **hardcoded** `socks5h://127.0.0.1:9090` in `tmdb.rs::build_client()`
+- Proxy: **hardcoded** `socks5h://127.0.0.1:9090` in `tmdb.rs::build_client()` (LUMI-14 will make configurable)
 - All requests need VPN/SOCKS5
 - `.env` with `TMDB_API_KEY` in working directory
 - Posters: cached to disk, served via `convertFileSrc()`
-- Manual match: `apply_tmdb_match(tmdb_id, media_type, uid)` — updates `media_items`
+- Manual match: `apply_tmdb_match(tmdb_id, media_type, uids: Vec<String>)` — updates `media_items` for all uids in a batch
+- **Episode metadata:** name / overview / still_path fetched lazily on first `DetailView` open (batch of 4 parallel); cached in `media_items`, previews in `cache/posters/episodes/`
 
 ### mpv playback
 
 - Launched with `--input-ipc-server=\\.\pipe\mpvsocket --fullscreen --keep-open=no --idle=no`
+- Player binary: `Command::new("mpv")`, resolved from PATH (LUMI-14 will make configurable)
 - Rust polls `time-pos` and `duration` every 2s while mpv alive
 - On exit: `mark_watched` saved, `watch_status_updated` event emitted
 - Resume: `play_video(path, start_position)` → `mpv --start=<sec>`
 
+### SQLite connection
+
+Singleton `Mutex<Connection>` in `AppState`, registered via `tauri::Builder::manage()`.
+Lock acquired per sync block, **never held across `.await`** (LUMI-23).
+
 ## Tauri commands
 
-| Command                                                | Purpose                                                |
-| :----------------------------------------------------- | :----------------------------------------------------- |
-| `scanner::scan_all`                                    | scan all folders, TMDB match new files, return Library |
-| `scanner::get_continue_watching`                       | return in-progress items                               |
-| `scanner::set_watched_bulk`                            | manual watched toggle                                  |
-| `scanner::get_undefined_items`                         | unmatched files                                        |
-| `tmdb::get_poster`                                     | download/cache poster by tmdb_id                       |
-| `tmdb::search_tmdb_manual`                             | manual search                                          |
-| `tmdb::apply_tmdb_match`                               | apply manual match                                     |
-| `tmdb::fetch_poster_preview`                           | base64 poster for match modal                          |
-| `player::play_video`                                   | launch mpv with optional start                         |
-| `player::toggle_fullscreen`                            | F11                                                    |
-| `config::get_folders` / `add_folder` / `remove_folder` | folder management                                      |
+| Command | Purpose |
+| :--- | :--- |
+| `scanner::scan_all` | scan all folders, TMDB match new files, return Library |
+| `scanner::get_continue_watching` | return in-progress items |
+| `scanner::set_watched_bulk` | manual watched toggle |
+| `scanner::get_undefined_items` | unmatched files |
+| `tmdb::get_poster` | download/cache poster by tmdb_id |
+| `tmdb::search_tmdb_manual` | manual search |
+| `tmdb::apply_tmdb_match` | apply manual match to list of uids |
+| `tmdb::fetch_poster_preview` | base64 poster for match modal |
+| `tmdb::fetch_episode_meta` | fetch episode name/overview/still_path (LUMI-18) |
+| `tmdb::get_episode_still` | download/cache episode preview (LUMI-18) |
+| `player::play_video` | launch mpv with optional start |
+| `player::toggle_fullscreen` | F11 |
+| `config::get_folders` / `add_folder` / `remove_folder` | folder management |
 
 ## Backlog
 
-### In progress
-
-- **LUMI-21b:** Vue refactoring
-  - ✅ `types.ts`, composables, `MediaPoster`, `MovieCard`, `ShowCard`
-  - ⏳ `ContextMenu.vue`, `MovieModal.vue`, `ShowModal.vue`, `MatchModal.vue`
-  - ⏳ `LibraryView.vue`, `App.vue` → thin shell
-
 ### Next
 
-- **LUMI-17:** details page for movie/show (replaces modal)
-- **LUMI-21e:** remove legacy `movies` / `tv_shows` tables, `find_cached`, `save_movie`, `save_manual_match`
-- **LUMI-22:** season detection from folder name
-- **LUMI-23:** singleton SQLite connection via `tauri::State`
-
-### Before release
-
-- **LUMI-14:** settings for player path, proxy, portable mode
+- **LUMI-14a:** `AppSettings` (`settings.json`), portable mode (backend foundation)
+- **LUMI-14b:** configurable player path (backend + UI)
+- **LUMI-14c:** configurable proxy URL (backend + UI)
 
 ### Low priority (wishlist)
 
@@ -80,7 +81,9 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 - Skip intro via MKV chapters
 - Parallel poster loading
 - Dynamic context menu positioning
-- Improved "remaining X of Y" format
+- Trailers on details page
+- Big backdrop on details page
+- Episode overview with spoiler toggle
 
 ### Post-release
 
@@ -111,35 +114,30 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 
 ### Library management (LUMI-14 — LUMI-19)
 
-- **LUMI-14:** (deferred) player path, proxy, portable mode settings
+- **LUMI-14:** (planned) player path, proxy, portable mode settings
 - **LUMI-15:** watch progress on all cards, episode counts for TV shows
 - **LUMI-16:** context menu ("⋮") on cards: play, resume, mark watched, match
-- **LUMI-17:** (planned) details page
-- **LUMI-18:** (planned) manual TMDB matching from library
+- **LUMI-17:** full-page DetailView replaces movie/show modals
+- **LUMI-18:** episode thumbnails + names from TMDB, lazy batch fetch
 - **LUMI-19:** manual TMDB matching modal (search + apply)
 
-### Data architecture (LUMI-20 — LUMI-21)
+### Data architecture (LUMI-20 — LUMI-23)
 
 - **LUMI-20:** `media_items` table with UID (xxhash of filename), stores **all** scanned files including unmatched
 - **LUMI-21a:** "Undefined" section for unmatched files, manual match from there
+- **LUMI-21b:** Vue refactoring into components / composables (ContextMenu, MatchModal, MovieModal, ShowModal, LibraryView, thin App.vue)
 - **LUMI-21c:** manual match updates `media_items` via `save_manual_match_to_item`
 - **LUMI-21d:** `uid` in `VideoFile`, context menu matching works
-- **LUMI-21e:** (planned) remove legacy `movies` / `tv_shows` tables
-- **LUMI-21b:**  Vue refactoring into components / composables
-
-### Future (planned)
-
-- **LUMI-22:** season detection from folder name
-- **LUMI-23:** singleton SQLite connection via `tauri::State`
-- **LUMI-17:** details page for movie / show
-- **LUMI-14:** settings for player, proxy, portable mode
-- **Post-release:** Android, Bluetooth remote, audio config
+- **LUMI-21e:** remove legacy `movies` / `tv_shows` tables
+- **LUMI-21f:** `apply_tmdb_match` takes `uids: Vec<String>`; TV show match updates all episodes
+- **LUMI-22:** detect season from parent folder name (`Season N`, `Сезон N`, `N сезон`, `SN`)
+- **LUMI-23:** singleton SQLite connection via `tauri::State`, lock per sync block
 
 ## Known issues
 
-- `Blade Runner 2049` parsed as `Blade Runner` + year 2049 → wrong TMDB match (LUMI-22)
-- TV show matching from context menu doesn't update `media_items` (only from "Undefined" section works)
-- `init_db()` called per command — potential `database is locked` under load (LUMI-23)
+- `Blade Runner 2049` parsed as `Blade Runner` + year 2049 → wrong TMDB match
+- `uid = xxh64(file_name)` — duplicates with the same name in different folders collide; second occurrence silently skipped
+- `proxy_url`, mpv path, and data dir are hardcoded (LUMI-14 will make configurable)
 
 ## Conventions
 
@@ -166,7 +164,6 @@ Examples:
 - `feat(LUMI-20): persistent media_items table with UID`
 - `fix: modal closes on text selection release outside`
 - `refactor: extract MovieCard and ShowCard`
-
 
 ## Workflow
 
