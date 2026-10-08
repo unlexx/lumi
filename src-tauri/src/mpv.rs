@@ -78,3 +78,11 @@ fn parse_f64_response(response: &str) -> Result<f64, String> {
         .parse::<f64>()
         .map_err(|e| format!("Parse error: {} in '{}'", e, rest))
 }
+
+/// Best-effort команда выхода. mpv может быть уже мёртв — это не ошибка.
+pub fn quit() -> Result<(), String> {
+    // send_command вернёт Err, если пайп недоступен (mpv уже закрыт).
+    // Нас это устраивает: значит, гасить нечего.
+    let _ = send_command(r#"{"command":["quit"]}"#);
+    Ok(())
+}

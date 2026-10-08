@@ -8,9 +8,17 @@ interface KeyboardOptions {
   withFullscreen?: boolean
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+}
+
 export function useKeyboard(options: KeyboardOptions = {}) {
   if (options.currentView) {
     onKeyStroke('Backspace', (e) => {
+      if (isEditableTarget(e.target)) return
       if (options.currentView!.value === 'settings') {
         e.preventDefault()
         options.currentView!.value = 'library'
@@ -26,7 +34,9 @@ export function useKeyboard(options: KeyboardOptions = {}) {
   }
 
   if (options.onEscape) {
-    onKeyStroke('Escape', () => {
+    onKeyStroke('Escape', (e) => {
+      // Не мешаем input'ам обрабатывать Escape самим
+      if (isEditableTarget(e.target)) return
       options.onEscape!()
     })
   }
