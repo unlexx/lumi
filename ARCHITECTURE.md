@@ -10,7 +10,7 @@ Every scanned file is stored, **matched or not**. Primary key = `uid` (xxhash of
 | `path`, `name` | full path + file name |
 | `media_type` | "movie" \| "tv_shows" |
 | `tmdb_id` | NULL if not matched |
-| `title`, `original_title`, `overview`, `poster_path`, `rating`, `release_date` | TMDB data |
+| `title`, `original_title`, `overview`, `poster_path`, `backdrop_path`, `rating`, `release_date` | TMDB data |
 | `parsed_title`, `parsed_year` | from filename parser |
 | `season`, `episode` | for TV shows |
 | `episode_name`, `episode_overview`, `episode_still_path` | TMDB episode metadata (lazy) |
@@ -39,7 +39,8 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 - **Episode metadata:** name / overview / still_path fetched lazily on first `DetailView` open (batch of 4 parallel); cached in `media_items`, previews in `cache/posters/episodes/`
 - **Trailers:** `fetch_trailer(tmdb_id, media_type, uid)` — два запроса к `/videos` (`ru-RU` + `en-US`), merge с дедупом по key. Приоритет выбора: `ru` → `en` → любой YouTube; внутри локали — `Trailer > Teaser > прочее`, official > не-official. Результат кэшируется в `media_items` (`trailer_key`, `trailer_fetched`). Ленивый фетч при открытии DetailView — по аналогии с episode metadata. При `trailer_key = NULL` и `trailer_fetched = 1` кнопка в UI скрыта.
 - **Trailer thumbnails:** `get_trailer_thumbnail(tmdb_id, media_type, uid)` — читает `trailer_key` из БД, качает `img.youtube.com/vi/{key}/hqdefault.jpg` через тот же proxy, что и постеры, кэширует в `posters/trailers/{movie|tv}_{tmdb_id}.jpg`, отдаёт путь для `convertFileSrc`.
-- **Open в браузере:** клик по кнопке → `openUrl('https://youtu.be/{key}')` через `tauri-plugin-opener`. Встроенный плеер и yt-dlp — вне скоупа (см. backlog).
+- **Open в браузере:** клик по кнопке → `openUrl('https://youtube.com/{key}')` через `tauri-plugin-opener`. Встроенный плеер и yt-dlp — вне скоупа (см. backlog).
+- **Backdrops:** `get_backdrop(tmdb_id, backdrop_path)` — качает `w1280` через тот же proxy, кэширует в `posters/backdrops/{tmdb_id}.jpg`, отдаёт путь для `convertFileSrc`. Шоу-левел: у сериалов одна подложка на тайтл. `backdrop_path` пишется в `media_items` при авто- и ручном матче. Настройка качества и blur-параметры — LUMI-26b.
 
 ### mpv playback
 
@@ -71,6 +72,7 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 | `tmdb::get_episode_still` | download/cache episode preview (LUMI-18) |
 | `tmdb::fetch_trailer` | fetch/pick trailer key, cache in media_items (LUMI-24) |
 | `tmdb::get_trailer_thumbnail` | download/cache YouTube thumbnail (LUMI-24) |
+| `tmdb::get_backdrop` | download/cache backdrop by tmdb_id (LUMI-26a) |
 | `player::play_video` | launch mpv with optional start |
 | `player::toggle_fullscreen` | F11 |
 | `config::get_folders` / `add_folder` / `remove_folder` | folder management |
@@ -83,12 +85,14 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 ### Low priority (wishlist)
 
 - Audio track / subtitle selection before playback
-- Skip intro via MKV chapters
 - Parallel poster loading
 - Dynamic context menu positioning
-- Big backdrop on details page
 - Episode overview with spoiler toggle
 - Кнопка „Проверить соединение“ для прокси
+
+### Architectural debt
+
+- Нормализация `media_items`: вынести TMDB-данные в отдельную таблицу `tmdb_entries` (один ряд на тайтл), оставить в `media_items` только файловые атрибуты и `tmdb_id` как FK. Сейчас одни и те же `title`/`overview`/`poster_path`/`backdrop_path`/`trailer_key` дублируются во всех эпизодах сериала.
 
 ### Post-release
 
@@ -126,7 +130,7 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 - **LUMI-18:** episode thumbnails + names from TMDB, lazy batch fetch
 - **LUMI-19:** manual TMDB matching modal (search + apply)
 
-### Data architecture (LUMI-20 — LUMI-23)
+### Data architecture (LUMI-20 — LUMI-26)
 
 - **LUMI-20:** `media_items` table with UID (xxhash of filename), stores **all** scanned files including unmatched
 - **LUMI-21a:** "Undefined" section for unmatched files, manual match from there
@@ -142,7 +146,10 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
   Trailer > Teaser. Кэш в `media_items` (`trailer_key`, `trailer_fetched`),
   thumbnail — в `posters/trailers/{movie|tv}_{tmdb_id}.jpg` через прокси.
   Открытие — `tauri-plugin-opener` (`openUrl`).
-
+- **LUMI-26a:** backdrop на DetailView. Колонка `backdrop_path` в `media_items`,
+  качается в `w1280` через прокси, кэш в `posters/backdrops/{tmdb_id}.jpg`,
+  отдаётся через `convertFileSrc`. Используется как размытый фон hero
+  с fallback на постер. Настройка качества и тюнинг blur/градиента — LUMI-26b.
 ## Known issues
 
 - `Blade Runner 2049` parsed as `Blade Runner` + year 2049 → wrong TMDB match

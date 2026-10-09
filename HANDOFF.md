@@ -6,6 +6,11 @@ Docs: ARCHITECTURE.md (актуален)
 
 ## Последнее закрытое (свежее сверху)
 
+- **LUMI-26a:** backdrop на DetailView. Колонка `backdrop_path` в `media_items`,
+  пишется при авто- и ручном матче. `get_backdrop` качает `w1280` через прокси,
+  кэширует в `posters/backdrops/{tmdb_id}.jpg`, отдаётся через `convertFileSrc`.
+  Используется как размытый фон hero вместо постера (fallback на постер).
+  Качество и blur-параметры — LUMI-26b.
 - **LUMI-24:** трейлеры в DetailView. Кнопка «▶ Трейлер» со спиннером → thumbnail.
   Lazy-фетч при открытии DetailView: два запроса к TMDB `/videos`
   (`ru-RU` + `en-US`), merge, приоритет ru → en → любой YouTube,
@@ -53,3 +58,8 @@ Docs: ARCHITECTURE.md (актуален)
 - Для сериалов `trailer_key` хранится только в `media_items` первого эпизода
   первого сезона (трейлер шоу-левел лежит в одной записи). При желании —
   расширить до батча по всем эпизодам шоу, как `apply_tmdb_match` для tv.
+- Backdrop грузится в фиксированном качестве `w1280`. Настройка `hi|medium|low`
+  и тюнинг blur/градиента — LUMI-26b.
+- TMDB-данные (title, overview, poster_path, backdrop_path, trailer_key)
+  дублируются во всех эпизодах сериала. Архитектурный долг — нормализация
+  в отдельную таблицу `tmdb_entries` (см. ARCHITECTURE.md → Architectural debt).
