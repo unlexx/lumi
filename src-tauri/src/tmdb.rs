@@ -698,7 +698,7 @@ pub async fn fetch_trailer(
         _ => return Err(format!("Invalid media_type: {}", media_type)),
     };
 
-    let url = format!(
+    let _url = format!(
         "https://api.themoviedb.org/3/{}/{}/videos?api_key={}&language=ru-RU",
         endpoint, tmdb_id, api_key
     );

@@ -361,6 +361,7 @@ pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
        episode_name, episode_overview, episode_still_path, episode_meta_fetched,
+       trailer_key, trailer_fetched,
                 scanned_at, updated_at
          FROM media_items WHERE uid = ?1",
         rusqlite::params![uid],
