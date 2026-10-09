@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { onKeyStroke } from '@vueuse/core'
 import type { VideoFile, TvShow, Episode } from '@/types'
 import { usePlayer } from '@/composables/usePlayer'
@@ -60,6 +61,82 @@ const resumeMoviePosition = computed(() => {
     if (m.duration && m.position / m.duration >= 0.95) return null
     return m.position
 })
+
+// === LUMI-24: trailer ===
+
+type TrailerState = 'loading' | 'available' | 'hidden'
+
+const trailerState = ref<TrailerState>('loading')
+const trailerKey = ref<string | null>(null)
+const trailerThumb = ref<string | null>(null)
+
+const mediaTypeForTmdb = computed(() =>
+    movie.value ? 'movie' : 'tv_shows'
+)
+
+const tmdbIdForTrailer = computed<number | null>(() => {
+    if (movie.value) return movie.value.tmdb?.id ?? null
+    return show.value?.tmdb?.id ?? null
+})
+
+const uidForTrailer = computed<string | null>(() => {
+    if (movie.value) return movie.value.uid
+    // для сериала берём первый эпизод — трейлер шоу-level,
+    // но uid нужен как ключ в media_items; любая серия шоу сойдёт
+    const first = show.value?.seasons[0]?.episodes[0]
+    return first?.uid ?? null
+})
+
+async function openTrailer() {
+    if (!trailerKey.value) return
+    try {
+        await openUrl(`https://youtu.be/${trailerKey.value}`)
+    } catch (e) {
+        console.error('[DetailView] openUrl failed:', e)
+    }
+}
+
+async function loadTrailer() {
+    const tmdbId = tmdbIdForTrailer.value
+    const uid = uidForTrailer.value
+    if (!tmdbId || !uid) {
+        trailerState.value = 'hidden'
+        return
+    }
+
+    trailerState.value = 'loading'
+    try {
+        const key = await invoke<string | null>('fetch_trailer', {
+            tmdbId,
+            mediaType: mediaTypeForTmdb.value,
+            uid
+        })
+
+        if (!key) {
+            trailerState.value = 'hidden'
+            return
+        }
+
+        trailerKey.value = key
+        trailerState.value = 'available'
+
+        // Thumbnail — best-effort, не блокирует кнопку
+        try {
+            const path = await invoke<string>('get_trailer_thumbnail', {
+                tmdbId,
+                mediaType: mediaTypeForTmdb.value,
+                uid
+            })
+            trailerThumb.value = convertFileSrc(path)
+        } catch (e) {
+            console.warn('[DetailView] trailer thumbnail failed:', e)
+        }
+    } catch (e) {
+        console.error('[DetailView] fetch_trailer failed:', e)
+        // Ошибку трактуем как «трейлера нет» — на следующем заходе попробуем ещё раз
+        trailerState.value = 'hidden'
+    }
+}
 
 function episodesWatched(show: TvShow): number {
     return show.seasons.flatMap((s) => s.episodes).filter((e) => e.watched).length
@@ -132,6 +209,8 @@ async function mapLimit<T, R>(
 }
 
 onMounted(async () => {
+    await loadTrailer()
+
     if (!show.value || !show.value.tmdb) return
 
     const tmdbId = show.value.tmdb.id
@@ -250,6 +329,13 @@ onMounted(async () => {
                         <button v-if="show && firstUnwatchedEpisode" class="btn-primary"
                             @click="playEpisode(firstUnwatchedEpisode)">
                             ▶ Смотреть {{ episodeLabel(firstUnwatchedEpisode) }}
+                        </button>
+                        <button v-if="trailerState !== 'hidden'" class="btn-trailer"
+                            :disabled="trailerState === 'loading'" @click="openTrailer">
+                            <span v-if="trailerState === 'loading'" class="trailer-spinner" />
+                            <img v-else-if="trailerThumb" :src="trailerThumb" alt="" class="trailer-thumb" />
+                            <span v-else class="trailer-play-icon">▶</span>
+                            <span>{{ trailerState === 'loading' ? 'Загрузка…' : 'Трейлер' }}</span>
                         </button>
                     </div>
 
@@ -579,5 +665,64 @@ onMounted(async () => {
             rgba(20, 22, 26, 0.3) 0%,
             rgba(20, 22, 26, 0.7) 50%,
             #14161a 100%);
+}
+
+.btn-trailer {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #2a2e35;
+    color: #e6e6e6;
+    border: 1px solid #3a3f47;
+    padding: 0.4rem 1rem 0.4rem 0.4rem;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.btn-trailer:hover:not(:disabled) {
+    background: #353a42;
+}
+
+.btn-trailer:disabled {
+    cursor: default;
+    opacity: 0.75;
+}
+
+.trailer-thumb {
+    width: 96px;
+    height: 54px;
+    object-fit: cover;
+    border-radius: 4px;
+    display: block;
+}
+
+.trailer-play-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 96px;
+    height: 54px;
+    border-radius: 4px;
+    background: #1e2127;
+    color: #4a9eff;
+}
+
+.trailer-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: 0.6rem;
+    border: 2px solid #3a3f47;
+    border-top-color: #4a9eff;
+    border-radius: 50%;
+    animation: trailer-spin 0.8s linear infinite;
+}
+
+@keyframes trailer-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 </style>

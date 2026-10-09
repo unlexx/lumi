@@ -133,6 +133,8 @@ pub struct MediaItem {
     pub episode_overview: Option<String>,
     pub episode_still_path: Option<String>,
     pub episode_meta_fetched: bool,
+    pub trailer_key: Option<String>,
+    pub trailer_fetched: bool,
     pub scanned_at: i64,
     pub updated_at: i64,
 }
@@ -189,6 +191,12 @@ pub fn episode_stills_dir() -> PathBuf {
     dir
 }
 
+pub fn trailers_dir() -> PathBuf {
+    let dir = posters_dir().join("trailers");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
 pub fn init_db() -> SqlResult<Connection> {
     let conn = Connection::open(db_path())?;
     conn.execute(
@@ -212,6 +220,8 @@ pub fn init_db() -> SqlResult<Connection> {
     episode_overview TEXT,
     episode_still_path TEXT,
     episode_meta_fetched INTEGER NOT NULL DEFAULT 0,
+    trailer_key TEXT,
+    trailer_fetched INTEGER NOT NULL DEFAULT 0,
     scanned_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 )",
@@ -375,8 +385,10 @@ pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
                 episode_overview: row.get(16)?,
                 episode_still_path: row.get(17)?,
                 episode_meta_fetched: row.get::<_, i64>(18)? != 0,
-                scanned_at: row.get(19)?,
-                updated_at: row.get(20)?,
+                trailer_key: row.get(19)?,
+                trailer_fetched: row.get::<_, i64>(20)? != 0,
+                scanned_at: row.get(21)?,
+                updated_at: row.get(22)?,
             })
         },
     )
@@ -390,8 +402,11 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
          (uid, path, name, media_type, tmdb_id, title, original_title, overview,
           poster_path, rating, release_date, parsed_title, parsed_year, season,
           episode,
-       episode_name, episode_overview, episode_still_path, episode_meta_fetched, scanned_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+          episode_name, episode_overview, episode_still_path, episode_meta_fetched,
+          trailer_key, trailer_fetched,
+          scanned_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                 ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
         rusqlite::params![
             item.uid,
             item.path,
@@ -399,7 +414,7 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.media_type,
             item.tmdb_id,
             item.title,
-            item.original_title, // ← добавили
+            item.original_title,
             item.overview,
             item.poster_path,
             item.rating,
@@ -411,7 +426,13 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.episode_name,
             item.episode_overview,
             item.episode_still_path,
-            if item.episode_meta_fetched { 1i64 } else { 0i64 },
+            if item.episode_meta_fetched {
+                1i64
+            } else {
+                0i64
+            },
+            item.trailer_key,
+            if item.trailer_fetched { 1i64 } else { 0i64 },
             item.scanned_at,
             item.updated_at,
         ],
@@ -506,7 +527,7 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
-       episode_name, episode_overview, episode_still_path, episode_meta_fetched,
+       episode_name, episode_overview, episode_still_path, episode_meta_fetched, trailer_key, trailer_fetched,
                 scanned_at, updated_at
          FROM media_items",
     ) {
@@ -535,8 +556,10 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
             episode_overview: row.get(16)?,
             episode_still_path: row.get(17)?,
             episode_meta_fetched: row.get::<_, i64>(18)? != 0,
-            scanned_at: row.get(19)?,
-            updated_at: row.get(20)?,
+            trailer_key: row.get(19)?,
+            trailer_fetched: row.get::<_, i64>(20)? != 0,
+            scanned_at: row.get(21)?,
+            updated_at: row.get(22)?,
         })
     });
 
@@ -550,7 +573,7 @@ pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
-       episode_name, episode_overview, episode_still_path, episode_meta_fetched,
+       episode_name, episode_overview, episode_still_path, episode_meta_fetched, trailer_key, trailer_fetched,
                 scanned_at, updated_at
          FROM media_items
          WHERE tmdb_id IS NULL",
@@ -580,8 +603,10 @@ pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
             episode_overview: row.get(16)?,
             episode_still_path: row.get(17)?,
             episode_meta_fetched: row.get::<_, i64>(18)? != 0,
-            scanned_at: row.get(19)?,
-            updated_at: row.get(20)?,
+            trailer_key: row.get(19)?,
+            trailer_fetched: row.get::<_, i64>(20)? != 0,
+            scanned_at: row.get(21)?,
+            updated_at: row.get(22)?,
         })
     });
 
@@ -612,6 +637,31 @@ pub fn update_episode_meta(
              episode_meta_fetched = 1, updated_at = ?4
          WHERE uid = ?5",
         rusqlite::params![episode_name, episode_overview, episode_still_path, now, uid,],
+    )?;
+    Ok(())
+}
+
+/// Читает состояние трейлера для uid.
+/// None — если uid не найден.
+/// Some((trailer_key, trailer_fetched)).
+pub fn get_trailer_state(conn: &Connection, uid: &str) -> Option<(Option<String>, bool)> {
+    conn.query_row(
+        "SELECT trailer_key, trailer_fetched FROM media_items WHERE uid = ?1",
+        rusqlite::params![uid],
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)? != 0)),
+    )
+    .optional()
+    .unwrap_or(None)
+}
+
+/// Пишет ключ трейлера (или NULL, если трейлера нет) и выставляет trailer_fetched = 1.
+pub fn set_trailer(conn: &Connection, uid: &str, trailer_key: Option<&str>) -> SqlResult<()> {
+    let now = now_ts();
+    conn.execute(
+        "UPDATE media_items
+         SET trailer_key = ?1, trailer_fetched = 1, updated_at = ?2
+         WHERE uid = ?3",
+        rusqlite::params![trailer_key, now, uid],
     )?;
     Ok(())
 }

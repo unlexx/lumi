@@ -53,6 +53,8 @@ pub fn run() {
             tmdb::fetch_poster_preview,
             tmdb::fetch_episode_meta,
             tmdb::get_episode_still,
+            tmdb::fetch_trailer,
+            tmdb::get_trailer_thumbnail,
             settings::get_settings,
             settings::update_settings,
             exit_app,
