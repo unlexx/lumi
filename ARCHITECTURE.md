@@ -15,6 +15,8 @@ Every scanned file is stored, **matched or not**. Primary key = `uid` (xxhash of
 | `season`, `episode` | for TV shows |
 | `episode_name`, `episode_overview`, `episode_still_path` | TMDB episode metadata (lazy) |
 | `episode_meta_fetched` | 0/1 — whether episode metadata was fetched |
+| `trailer_key` | YouTube key выбранного трейлера (NULL если нет) |
+| `trailer_fetched` | 0/1 — ходили ли за трейлером в TMDB |
 | `scanned_at`, `updated_at` | unix timestamps |
 
 **Schema changes require wiping `cache.db`** — no migration path.
@@ -35,6 +37,9 @@ Keyed by `file_path` (not uid). Tracks playback progress.
 - Posters: cached to disk, served via `convertFileSrc()`
 - Manual match: `apply_tmdb_match(tmdb_id, media_type, uids: Vec<String>)` — updates `media_items` for all uids in a batch
 - **Episode metadata:** name / overview / still_path fetched lazily on first `DetailView` open (batch of 4 parallel); cached in `media_items`, previews in `cache/posters/episodes/`
+- **Trailers:** `fetch_trailer(tmdb_id, media_type, uid)` — два запроса к `/videos` (`ru-RU` + `en-US`), merge с дедупом по key. Приоритет выбора: `ru` → `en` → любой YouTube; внутри локали — `Trailer > Teaser > прочее`, official > не-official. Результат кэшируется в `media_items` (`trailer_key`, `trailer_fetched`). Ленивый фетч при открытии DetailView — по аналогии с episode metadata. При `trailer_key = NULL` и `trailer_fetched = 1` кнопка в UI скрыта.
+- **Trailer thumbnails:** `get_trailer_thumbnail(tmdb_id, media_type, uid)` — читает `trailer_key` из БД, качает `img.youtube.com/vi/{key}/hqdefault.jpg` через тот же proxy, что и постеры, кэширует в `posters/trailers/{movie|tv}_{tmdb_id}.jpg`, отдаёт путь для `convertFileSrc`.
+- **Open в браузере:** клик по кнопке → `openUrl('https://youtu.be/{key}')` через `tauri-plugin-opener`. Встроенный плеер и yt-dlp — вне скоупа (см. backlog).
 
 ### mpv playback
 
@@ -64,6 +69,8 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 | `tmdb::fetch_poster_preview` | base64 poster for match modal |
 | `tmdb::fetch_episode_meta` | fetch episode name/overview/still_path (LUMI-18) |
 | `tmdb::get_episode_still` | download/cache episode preview (LUMI-18) |
+| `tmdb::fetch_trailer` | fetch/pick trailer key, cache in media_items (LUMI-24) |
+| `tmdb::get_trailer_thumbnail` | download/cache YouTube thumbnail (LUMI-24) |
 | `player::play_video` | launch mpv with optional start |
 | `player::toggle_fullscreen` | F11 |
 | `config::get_folders` / `add_folder` / `remove_folder` | folder management |
@@ -79,7 +86,6 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 - Skip intro via MKV chapters
 - Parallel poster loading
 - Dynamic context menu positioning
-- Trailers on details page
 - Big backdrop on details page
 - Episode overview with spoiler toggle
 - Кнопка „Проверить соединение“ для прокси
@@ -131,6 +137,11 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 - **LUMI-21f:** `apply_tmdb_match` takes `uids: Vec<String>`; TV show match updates all episodes
 - **LUMI-22:** detect season from parent folder name (`Season N`, `Сезон N`, `N сезон`, `SN`)
 - **LUMI-23:** singleton SQLite connection via `tauri::State`, lock per sync block
+- **LUMI-24:** трейлеры в DetailView. Кнопка «▶ Трейлер» со спиннером → thumbnail.
+  Lazy-фетч при открытии DetailView, ru → en → любой YouTube, внутри локали
+  Trailer > Teaser. Кэш в `media_items` (`trailer_key`, `trailer_fetched`),
+  thumbnail — в `posters/trailers/{movie|tv}_{tmdb_id}.jpg` через прокси.
+  Открытие — `tauri-plugin-opener` (`openUrl`).
 
 ## Known issues
 

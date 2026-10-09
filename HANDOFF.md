@@ -6,6 +6,13 @@ Docs: ARCHITECTURE.md (актуален)
 
 ## Последнее закрытое (свежее сверху)
 
+- **LUMI-24:** трейлеры в DetailView. Кнопка «▶ Трейлер» со спиннером → thumbnail.
+  Lazy-фетч при открытии DetailView: два запроса к TMDB `/videos`
+  (`ru-RU` + `en-US`), merge, приоритет ru → en → любой YouTube,
+  Trailer > Teaser, official > не-official. Кэш в `media_items`
+  (`trailer_key`, `trailer_fetched`), thumbnail —
+  `posters/trailers/{movie|tv}_{tmdb_id}.jpg` через прокси.
+  Открытие — `tauri-plugin-opener` (`openUrl` на `https://youtu.be/{key}`).
 - **LUMI-14a:** `AppSettings` (`settings.json`), portable mode через `portable.flag` → `<exe_dir>/lumi-data/`. Команды `get_settings` / `update_settings` / `exit_app` / `is_player_active`. `ConfirmDialog.vue` + модалка выхода по Escape. RAII-сессии для `player_active` и `mpv_child`, mpv не остаётся висеть при выходе.
 - **LUMI-14b:** configurable player path. `mpv::launch` принимает `player_path`, читает из `AppState`. `None` → `mpv` из PATH.
 - **LUMI-14c:** configurable SOCKS5 proxy. `proxy_url: Option<String>` (`socks5h://host:port`), UI — input `host:port`. `build_client(Option<&str>)`, `None` → без прокси. Обновление без перезапуска.
@@ -39,4 +46,10 @@ Docs: ARCHITECTURE.md (актуален)
 - `uid = xxh64(file_name)` — дубли файлов с одинаковым именем в разных папках
   коллизят, второй молча пропускается.
 - Proxy URL, путь к mpv и data dir захардкожены (**LUMI-14 их чинит**).
-- Миграции схемы нет — при изменениях `media_items` нужно стирать `cache.db`.
+- Миграции схемы нет — при изменениях `media_items` нужно стирать `cache.db` (только для предрелизных версий).
+- Трейлеры открываются во внешнем браузере, не внутри приложения.
+  Встроенный плеер (iframe) не поддерживается на Tauri без ломания CSP и autoplay;
+  mpv + yt-dlp — в wishlist, может ломаться при обновлениях YouTube.
+- Для сериалов `trailer_key` хранится только в `media_items` первого эпизода
+  первого сезона (трейлер шоу-левел лежит в одной записи). При желании —
+  расширить до батча по всем эпизодам шоу, как `apply_tmdb_match` для tv.
