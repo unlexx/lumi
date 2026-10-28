@@ -1,5 +1,6 @@
 use crate::cache;
 use crate::cache::AppState;
+use crate::display;
 use crate::mpv;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
@@ -58,6 +59,16 @@ fn play_and_track(
         s.player_path.clone()
     };
 
+    // --- Adaptive refresh rate --------------------------------------------
+    // Гард захватывает текущий режим СРАЗУ. Дальше пытаемся подобрать
+    // частоту под fps видео; если не выйдет — остаёмся на исходной,
+    // гард при выходе всё равно попробует восстановить (no-op).
+    let _display_guard = display::DisplayGuard::new();
+    if let Some(hz) = display::determine_fps(file_path) {
+        _display_guard.set_refresh_rate(hz);
+    }
+
+    // --- Запуск mpv -------------------------------------------------------
     let child = mpv::launch(file_path, start_position, player_path.as_deref())?;
     state.set_mpv_child(child);
 

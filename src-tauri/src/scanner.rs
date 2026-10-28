@@ -27,6 +27,7 @@ pub struct TmdbInfo {
     pub original_title: Option<String>,
     pub overview: Option<String>,
     pub poster_url: Option<String>,
+    pub backdrop_path: Option<String>,
     pub rating: Option<f64>,
 }
 
@@ -219,6 +220,7 @@ pub async fn scan_all(
                     original_title: None,
                     overview: None,
                     poster_path: None,
+                    backdrop_path: None,
                     rating: None,
                     release_date: None,
                     parsed_title,
@@ -272,6 +274,7 @@ pub async fn scan_all(
                     movie.original_title.as_deref(),
                     movie.overview.as_deref(),
                     movie.poster_path.as_deref(),
+                    movie.backdrop_path.as_deref(),
                     movie.vote_average,
                     movie.release_date.as_deref(),
                 );
@@ -320,6 +323,7 @@ pub async fn scan_all(
                         tv.original_name.as_deref(),
                         tv.overview.as_deref(),
                         tv.poster_path.as_deref(),
+                        tv.backdrop_path.as_deref(),
                         tv.vote_average,
                         tv.first_air_date.as_deref(),
                     );
@@ -410,6 +414,7 @@ fn media_item_to_video_file(item: &crate::cache::MediaItem, conn: &Connection) -
             .poster_path
             .as_ref()
             .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p)),
+        backdrop_path: item.backdrop_path.clone(), // ← новое
         rating: item.rating,
     });
 
@@ -508,6 +513,7 @@ fn build_tv_shows(items: &[crate::cache::MediaItem], conn: &Connection) -> Vec<T
                 .poster_path
                 .as_ref()
                 .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p)),
+            backdrop_path: first.backdrop_path.clone(), // ← новое
             rating: first.rating,
         });
 

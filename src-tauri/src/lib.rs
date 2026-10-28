@@ -1,6 +1,7 @@
 use tauri::Manager;
 mod cache;
 mod config;
+mod display;
 mod logger;
 mod mpv;
 mod parser;
@@ -55,6 +56,7 @@ pub fn run() {
             tmdb::get_episode_still,
             tmdb::fetch_trailer,
             tmdb::get_trailer_thumbnail,
+            tmdb::get_backdrop,
             settings::get_settings,
             settings::update_settings,
             exit_app,
@@ -75,31 +77,34 @@ fn toggle_fullscreen(window: tauri::Window) -> Result<(), String> {
 
 #[tauri::command]
 fn exit_app(app: tauri::AppHandle) {
-    // 1. best-effort: послать quit через IPC
+    // 1. mpv quit (best-effort)
     if let Err(e) = crate::mpv::quit() {
         crate::log_info!("mpv quit before exit failed (probably already dead): {}", e);
     }
 
-    // 2. дать mpv шанс завершиться самостоятельно
+    // 2. дать mpv шанс завершиться
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    // 3. если mpv ещё жив — прибить его жёстко
+    // 3. если mpv ещё жив — прибить
     {
         let state = app.state::<cache::AppState>();
         if let Some(mut child) = state.take_mpv_child() {
             match child.try_wait() {
-                Ok(Some(_)) => { /* уже завершился сам — ок */ }
+                Ok(Some(_)) => {}
                 Ok(None) => {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
                 Err(_) => {
-                    // не смогли опросить — на всякий случай kill
                     let _ = child.kill();
                 }
             }
         }
     }
+
+    // 4. Восстанавливаем частоту дисплея. `app.exit(0)` не разворачивает стеки
+    //    потоков, поэтому Drop DisplayGuard может не сработать — делаем явно.
+    crate::display::restore_saved_mode();
 
     app.exit(0);
 }

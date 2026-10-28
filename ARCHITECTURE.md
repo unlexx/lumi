@@ -79,6 +79,8 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 
 ## Backlog
 
+LUMI-27: галерея backdrop'ов в DetailView. Показывать список backdrop'ов из TMDB /images, давать листать ←/→ или свайпом, лениво грузить выбранный, запоминать выбор в media_backdrops.selected. Кэш — posters/backdrops/{tmdb_id}/{hash}.jpg.
+
 ### Next
 
 
@@ -112,7 +114,6 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 - **LUMI-6:** poster grid UI, movie details modal, system player
 
 ### Playback & tracking (LUMI-7 — LUMI-13)
-
 - **LUMI-7:** TV filename parser (`SxxExx`), grouping into `TvShow` / `Season` / `Episode`
 - **LUMI-8:** folder config (`folders.json`) with `movie` / `tv_shows` types, settings UI
 - **LUMI-9:** TMDB metadata for TV shows (`/search/tv`), separate cache table
@@ -120,6 +121,13 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 - **LUMI-11:** incremental file scanning (skip existing)
 - **LUMI-12:** mpv integration with IPC (`\\.\pipe\mpvsocket`), watch tracking (`watch_status`), auto-mark watched at 95%
 - **LUMI-13:** "Continue Watching" section with resume from saved position
+- **LUMI-25:** перед запуском mpv `play_and_track` создаёт
+  `DisplayGuard`, определяет fps через `ffprobe` и переключает частоту
+  на ближайшую из `SUPPORTED_REFRESH_RATES` (23/24/25/30/50/60).
+  `CDS_FULLSCREEN` — режим не пишется в реестр. Возврат — через RAII
+  (`Drop for DisplayGuard`) + явный `restore_saved_mode()` в `exit_app`.
+  `ffprobe` — внешняя зависимость; в wishlist — переезд на mpv IPC
+  (`container-fps` через паузу).
 
 ### Library management (LUMI-14 — LUMI-19)
 
@@ -151,7 +159,14 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
   отдаётся через `convertFileSrc`. Используется как размытый фон hero
   с fallback на постер. Настройка качества и тюнинг blur/градиента — LUMI-26b.
 ## Known issues
-
+- LUMI-25: переключение частоты работает только на **primary** дисплее
+  (`PCWSTR::null()`). Если проектор — вторичный экран (extend), частота
+  переключится на ноутбуке. Фикс — перебирать `EnumDisplayDevicesW` и
+  применять режим на нужный `\\.\DISPLAYn` (см. обсуждение в LUMI-25).
+- `ffprobe` — внешний бинарник. В `find_ffprobe()` есть fallback на папку
+  mpv и стандартные пути, но на чистой машине его всё равно нужно
+  положить руками. Долгосрочно — mpv IPC `container-fps` (без внешних
+  зависимостей).
 - `Blade Runner 2049` parsed as `Blade Runner` + year 2049 → wrong TMDB match
 - `uid = xxh64(file_name)` — duplicates with the same name in different folders collide; second occurrence silently skipped
 - Windows-only пайп mpv (\\.\pipe\mpvsocket`). Для macOS/Linux — `cfg(target_os)`.

@@ -34,10 +34,11 @@ directories = "5"
 interprocess = "2.2"
 base64 = "0.22"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+windows = { version = "0.58", features = ["Win32_Graphics_Gdi", "Win32_Foundation"] }
+
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
+# panic = "abort"  ← см. примечание в конце: RAII-гард не сработает при panic в release
 strip = true

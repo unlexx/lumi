@@ -123,6 +123,7 @@ pub struct MediaItem {
     pub original_title: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
+    pub backdrop_path: Option<String>,
     pub rating: Option<f64>,
     pub release_date: Option<String>,
     pub parsed_title: String,
@@ -185,6 +186,12 @@ pub fn posters_dir() -> PathBuf {
     posters
 }
 
+pub fn backdrops_dir() -> PathBuf {
+    let dir = posters_dir().join("backdrops");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
 pub fn episode_stills_dir() -> PathBuf {
     let dir = posters_dir().join("episodes");
     std::fs::create_dir_all(&dir).ok();
@@ -210,6 +217,7 @@ pub fn init_db() -> SqlResult<Connection> {
     original_title TEXT,
     overview TEXT,
     poster_path TEXT,
+    backdrop_path TEXT,
     rating REAL,
     release_date TEXT,
     parsed_title TEXT,
@@ -358,10 +366,11 @@ pub fn set_watched_bulk(conn: &Connection, paths: &[String], watched: bool) -> S
 
 pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
     conn.query_row(
-        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
+        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview,
+                poster_path, backdrop_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
-       episode_name, episode_overview, episode_still_path, episode_meta_fetched,
-       trailer_key, trailer_fetched,
+                episode_name, episode_overview, episode_still_path, episode_meta_fetched,
+                trailer_key, trailer_fetched,
                 scanned_at, updated_at
          FROM media_items WHERE uid = ?1",
         rusqlite::params![uid],
@@ -376,20 +385,21 @@ pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
                 original_title: row.get(6)?,
                 overview: row.get(7)?,
                 poster_path: row.get(8)?,
-                rating: row.get(9)?,
-                release_date: row.get(10)?,
-                parsed_title: row.get(11)?,
-                parsed_year: row.get(12)?,
-                season: row.get(13)?,
-                episode: row.get(14)?,
-                episode_name: row.get(15)?,
-                episode_overview: row.get(16)?,
-                episode_still_path: row.get(17)?,
-                episode_meta_fetched: row.get::<_, i64>(18)? != 0,
-                trailer_key: row.get(19)?,
-                trailer_fetched: row.get::<_, i64>(20)? != 0,
-                scanned_at: row.get(21)?,
-                updated_at: row.get(22)?,
+                backdrop_path: row.get(9)?, // ← новое
+                rating: row.get(10)?,       // ← было 9
+                release_date: row.get(11)?, // ← было 10
+                parsed_title: row.get(12)?, // ← было 11
+                parsed_year: row.get(13)?,
+                season: row.get(14)?,
+                episode: row.get(15)?,
+                episode_name: row.get(16)?,
+                episode_overview: row.get(17)?,
+                episode_still_path: row.get(18)?,
+                episode_meta_fetched: row.get::<_, i64>(19)? != 0, // было 18
+                trailer_key: row.get(20)?,                         // было 19
+                trailer_fetched: row.get::<_, i64>(21)? != 0,      // было 20
+                scanned_at: row.get(22)?,                          // было 21
+                updated_at: row.get(23)?,                          // было 22
             })
         },
     )
@@ -401,13 +411,13 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
     conn.execute(
         "INSERT OR REPLACE INTO media_items
          (uid, path, name, media_type, tmdb_id, title, original_title, overview,
-          poster_path, rating, release_date, parsed_title, parsed_year, season,
-          episode,
+          poster_path, backdrop_path, rating, release_date, parsed_title, parsed_year,
+          season, episode,
           episode_name, episode_overview, episode_still_path, episode_meta_fetched,
           trailer_key, trailer_fetched,
           scanned_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                 ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         rusqlite::params![
             item.uid,
             item.path,
@@ -418,6 +428,7 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.original_title,
             item.overview,
             item.poster_path,
+            item.backdrop_path,          // ← новое
             item.rating,
             item.release_date,
             item.parsed_title,
@@ -427,11 +438,7 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.episode_name,
             item.episode_overview,
             item.episode_still_path,
-            if item.episode_meta_fetched {
-                1i64
-            } else {
-                0i64
-            },
+            if item.episode_meta_fetched { 1i64 } else { 0i64 },
             item.trailer_key,
             if item.trailer_fetched { 1i64 } else { 0i64 },
             item.scanned_at,
@@ -458,6 +465,7 @@ pub fn update_tmdb(
     original_title: Option<&str>,
     overview: Option<&str>,
     poster_path: Option<&str>,
+    backdrop_path: Option<&str>, // ← новое
     rating: Option<f64>,
     release_date: Option<&str>,
 ) -> SqlResult<()> {
@@ -465,14 +473,16 @@ pub fn update_tmdb(
     conn.execute(
         "UPDATE media_items
          SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
-             poster_path = ?5, rating = ?6, release_date = ?7, updated_at = ?8
-         WHERE uid = ?9",
+             poster_path = ?5, backdrop_path = ?6, rating = ?7, release_date = ?8,
+             updated_at = ?9
+         WHERE uid = ?10",
         rusqlite::params![
             tmdb_id,
             title,
             original_title,
             overview,
             poster_path,
+            backdrop_path,
             rating,
             release_date,
             now,
@@ -492,6 +502,7 @@ pub fn update_tmdb_for_uids(
     original_title: Option<&str>,
     overview: Option<&str>,
     poster_path: Option<&str>,
+    backdrop_path: Option<&str>, // ← новое
     rating: Option<f64>,
     release_date: Option<&str>,
 ) -> SqlResult<usize> {
@@ -503,14 +514,16 @@ pub fn update_tmdb_for_uids(
         let affected = tx.execute(
             "UPDATE media_items
              SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
-                 poster_path = ?5, rating = ?6, release_date = ?7, updated_at = ?8
-             WHERE uid = ?9",
+                 poster_path = ?5, backdrop_path = ?6, rating = ?7, release_date = ?8,
+                 updated_at = ?9
+             WHERE uid = ?10",
             rusqlite::params![
                 tmdb_id,
                 title,
                 original_title,
                 overview,
                 poster_path,
+                backdrop_path,
                 rating,
                 release_date,
                 now,
@@ -526,7 +539,7 @@ pub fn update_tmdb_for_uids(
 
 pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
-        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
+        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path, backdrop_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
        episode_name, episode_overview, episode_still_path, episode_meta_fetched, trailer_key, trailer_fetched,
                 scanned_at, updated_at
@@ -547,20 +560,21 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
             original_title: row.get(6)?,
             overview: row.get(7)?,
             poster_path: row.get(8)?,
-            rating: row.get(9)?,
-            release_date: row.get(10)?,
-            parsed_title: row.get(11)?,
-            parsed_year: row.get(12)?,
-            season: row.get(13)?,
-            episode: row.get(14)?,
-            episode_name: row.get(15)?,
-            episode_overview: row.get(16)?,
-            episode_still_path: row.get(17)?,
-            episode_meta_fetched: row.get::<_, i64>(18)? != 0,
-            trailer_key: row.get(19)?,
-            trailer_fetched: row.get::<_, i64>(20)? != 0,
-            scanned_at: row.get(21)?,
-            updated_at: row.get(22)?,
+            backdrop_path: row.get(9)?,
+            rating: row.get(10)?,
+            release_date: row.get(11)?,
+            parsed_title: row.get(12)?,
+            parsed_year: row.get(13)?,
+            season: row.get(14)?,
+            episode: row.get(15)?,
+            episode_name: row.get(16)?,
+            episode_overview: row.get(17)?,
+            episode_still_path: row.get(18)?,
+            episode_meta_fetched: row.get::<_, i64>(19)? != 0,
+            trailer_key: row.get(20)?,
+            trailer_fetched: row.get::<_, i64>(21)? != 0,
+            scanned_at: row.get(22)?,
+            updated_at: row.get(23)?,
         })
     });
 
@@ -572,7 +586,7 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
 
 pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
-        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path,
+        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path, backdrop_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
        episode_name, episode_overview, episode_still_path, episode_meta_fetched, trailer_key, trailer_fetched,
                 scanned_at, updated_at
@@ -594,20 +608,21 @@ pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
             original_title: row.get(6)?,
             overview: row.get(7)?,
             poster_path: row.get(8)?,
-            rating: row.get(9)?,
-            release_date: row.get(10)?,
-            parsed_title: row.get(11)?,
-            parsed_year: row.get(12)?,
-            season: row.get(13)?,
-            episode: row.get(14)?,
-            episode_name: row.get(15)?,
-            episode_overview: row.get(16)?,
-            episode_still_path: row.get(17)?,
-            episode_meta_fetched: row.get::<_, i64>(18)? != 0,
-            trailer_key: row.get(19)?,
-            trailer_fetched: row.get::<_, i64>(20)? != 0,
-            scanned_at: row.get(21)?,
-            updated_at: row.get(22)?,
+            backdrop_path: row.get(9)?,
+            rating: row.get(10)?,
+            release_date: row.get(11)?,
+            parsed_title: row.get(12)?,
+            parsed_year: row.get(13)?,
+            season: row.get(14)?,
+            episode: row.get(15)?,
+            episode_name: row.get(16)?,
+            episode_overview: row.get(17)?,
+            episode_still_path: row.get(18)?,
+            episode_meta_fetched: row.get::<_, i64>(19)? != 0,
+            trailer_key: row.get(20)?,
+            trailer_fetched: row.get::<_, i64>(21)? != 0,
+            scanned_at: row.get(22)?,
+            updated_at: row.get(23)?,
         })
     });
 
