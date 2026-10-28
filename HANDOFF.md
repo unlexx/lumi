@@ -6,6 +6,13 @@ Docs: ARCHITECTURE.md (актуален)
 
 ## Последнее закрытое (свежее сверху)
 
+- **LUMI-25:** адаптивная частота обновления под fps видео. `display.rs`
+  (Win32 GDI: EnumDisplaySettingsW/ChangeDisplaySettingsExW + CDS_FULLSCREEN),
+  `DisplayGuard` — RAII-возврат режима при drop + `restore_saved_mode()`
+  из `exit_app` на случай `app.exit`/kill. FPS определяется через `ffprobe`
+  (`r_frame_rate`), 23.976→23, 29.97→30, 59.94→60. `find_ffprobe()` ищет
+  бинарь в PATH, рядом с mpv и в стандартных путях. Ошибки WinAPI/ffprobe
+  только логируются — воспроизведение продолжается на текущей частоте.
 - **LUMI-26a:** backdrop на DetailView. Колонка `backdrop_path` в `media_items`,
   пишется при авто- и ручном матче. `get_backdrop` качает `w1280` через прокси,
   кэширует в `posters/backdrops/{tmdb_id}.jpg`, отдаётся через `convertFileSrc`.

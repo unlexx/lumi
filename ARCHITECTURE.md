@@ -114,7 +114,13 @@ LUMI-27: галерея backdrop'ов в DetailView. Показывать спи
 - **LUMI-6:** poster grid UI, movie details modal, system player
 
 ### Playback & tracking (LUMI-7 — LUMI-13)
-
+- **Refresh rate:** перед запуском mpv `play_and_track` создаёт
+  `DisplayGuard`, определяет fps через `ffprobe` и переключает частоту
+  на ближайшую из `SUPPORTED_REFRESH_RATES` (23/24/25/30/50/60).
+  `CDS_FULLSCREEN` — режим не пишется в реестр. Возврат — через RAII
+  (`Drop for DisplayGuard`) + явный `restore_saved_mode()` в `exit_app`.
+  `ffprobe` — внешняя зависимость; в wishlist — переезд на mpv IPC
+  (`container-fps` через паузу).
 - **LUMI-7:** TV filename parser (`SxxExx`), grouping into `TvShow` / `Season` / `Episode`
 - **LUMI-8:** folder config (`folders.json`) with `movie` / `tv_shows` types, settings UI
 - **LUMI-9:** TMDB metadata for TV shows (`/search/tv`), separate cache table
@@ -153,7 +159,14 @@ LUMI-27: галерея backdrop'ов в DetailView. Показывать спи
   отдаётся через `convertFileSrc`. Используется как размытый фон hero
   с fallback на постер. Настройка качества и тюнинг blur/градиента — LUMI-26b.
 ## Known issues
-
+- LUMI-25: переключение частоты работает только на **primary** дисплее
+  (`PCWSTR::null()`). Если проектор — вторичный экран (extend), частота
+  переключится на ноутбуке. Фикс — перебирать `EnumDisplayDevicesW` и
+  применять режим на нужный `\\.\DISPLAYn` (см. обсуждение в LUMI-25).
+- `ffprobe` — внешний бинарник. В `find_ffprobe()` есть fallback на папку
+  mpv и стандартные пути, но на чистой машине его всё равно нужно
+  положить руками. Долгосрочно — mpv IPC `container-fps` (без внешних
+  зависимостей).
 - `Blade Runner 2049` parsed as `Blade Runner` + year 2049 → wrong TMDB match
 - `uid = xxh64(file_name)` — duplicates with the same name in different folders collide; second occurrence silently skipped
 - Windows-only пайп mpv (\\.\pipe\mpvsocket`). Для macOS/Linux — `cfg(target_os)`.
