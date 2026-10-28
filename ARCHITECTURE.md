@@ -114,13 +114,6 @@ LUMI-27: галерея backdrop'ов в DetailView. Показывать спи
 - **LUMI-6:** poster grid UI, movie details modal, system player
 
 ### Playback & tracking (LUMI-7 — LUMI-13)
-- **Refresh rate:** перед запуском mpv `play_and_track` создаёт
-  `DisplayGuard`, определяет fps через `ffprobe` и переключает частоту
-  на ближайшую из `SUPPORTED_REFRESH_RATES` (23/24/25/30/50/60).
-  `CDS_FULLSCREEN` — режим не пишется в реестр. Возврат — через RAII
-  (`Drop for DisplayGuard`) + явный `restore_saved_mode()` в `exit_app`.
-  `ffprobe` — внешняя зависимость; в wishlist — переезд на mpv IPC
-  (`container-fps` через паузу).
 - **LUMI-7:** TV filename parser (`SxxExx`), grouping into `TvShow` / `Season` / `Episode`
 - **LUMI-8:** folder config (`folders.json`) with `movie` / `tv_shows` types, settings UI
 - **LUMI-9:** TMDB metadata for TV shows (`/search/tv`), separate cache table
@@ -128,6 +121,13 @@ LUMI-27: галерея backdrop'ов в DetailView. Показывать спи
 - **LUMI-11:** incremental file scanning (skip existing)
 - **LUMI-12:** mpv integration with IPC (`\\.\pipe\mpvsocket`), watch tracking (`watch_status`), auto-mark watched at 95%
 - **LUMI-13:** "Continue Watching" section with resume from saved position
+- **LUMI-25:** перед запуском mpv `play_and_track` создаёт
+  `DisplayGuard`, определяет fps через `ffprobe` и переключает частоту
+  на ближайшую из `SUPPORTED_REFRESH_RATES` (23/24/25/30/50/60).
+  `CDS_FULLSCREEN` — режим не пишется в реестр. Возврат — через RAII
+  (`Drop for DisplayGuard`) + явный `restore_saved_mode()` в `exit_app`.
+  `ffprobe` — внешняя зависимость; в wishlist — переезд на mpv IPC
+  (`container-fps` через паузу).
 
 ### Library management (LUMI-14 — LUMI-19)
 
