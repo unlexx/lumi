@@ -55,6 +55,7 @@ pub fn run() {
             tmdb::get_episode_still,
             tmdb::fetch_trailer,
             tmdb::get_trailer_thumbnail,
+            tmdb::get_backdrop,
             settings::get_settings,
             settings::update_settings,
             exit_app,

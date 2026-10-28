@@ -1,3 +1,4 @@
+backdrop
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
@@ -41,6 +42,23 @@ const year = computed(() => {
 const posterUrl = computed(() => {
     if (movie.value) return movie.value.tmdb?.poster_local || null
     return show.value?.tmdb?.poster_local || null
+})
+
+const backdropLocal = ref<string | null>(null)
+
+const backdropPath = computed<string | null>(() => {
+    if (movie.value) return movie.value.tmdb?.backdrop_path ?? null
+    return show.value?.tmdb?.backdrop_path ?? null
+})
+
+const tmdbIdForBackdrop = computed<number | null>(() => {
+    if (movie.value) return movie.value.tmdb?.id ?? null
+    return show.value?.tmdb?.id ?? null
+})
+
+const backdropUrl = computed<string | null>(() => {
+    if (backdropLocal.value) return convertFileSrc(backdropLocal.value)
+    return posterUrl.value  // fallback
 })
 
 const rating = computed(() => {
@@ -138,6 +156,22 @@ async function loadTrailer() {
     }
 }
 
+async function loadBackdrop() {
+    const id = tmdbIdForBackdrop.value
+    const path = backdropPath.value
+    if (!id || !path) return
+    try {
+        const local = await invoke<string>('get_backdrop', {
+            tmdbId: id,
+            backdropPath: path
+        })
+        backdropLocal.value = local
+    } catch (e) {
+        console.warn('[DetailView] get_backdrop failed:', e)
+        // остаёмся на постере
+    }
+}
+
 function episodesWatched(show: TvShow): number {
     return show.seasons.flatMap((s) => s.episodes).filter((e) => e.watched).length
 }
@@ -210,6 +244,7 @@ async function mapLimit<T, R>(
 
 onMounted(async () => {
     await loadTrailer()
+    await Promise.all([loadTrailer(), loadBackdrop()])
 
     if (!show.value || !show.value.tmdb) return
 
@@ -276,7 +311,7 @@ onMounted(async () => {
     <div class="detail">
         <div class="detail-hero">
             <div class="hero-backdrop">
-                <img v-if="posterUrl" :src="posterUrl" :alt="title" class="hero-image" />
+                <img v-if="backdropUrl" :src="backdropUrl" :alt="title" class="hero-image" />
             </div>
 
             <div class="hero-content">
@@ -370,57 +405,66 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* ... все стили как были + новые для .ep-thumb / .ep-info / .ep-thumb-placeholder ... */
-
 .detail {
     position: relative;
     min-height: 100vh;
     background: #14161a;
-    padding-bottom: 4rem;
 }
 
 .detail-hero {
     position: relative;
-    padding: 2rem 4rem 0;
-    margin-bottom: 2rem;
+    min-height: 100vh;
+    padding: 2rem 4rem 3rem;
+    display: flex;
+    align-items: flex-end;
 }
 
 .hero-backdrop {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 420px;
+    inset: 0;
     overflow: hidden;
     pointer-events: none;
+}
+
+.hero-backdrop::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom,
+            rgba(20, 22, 26, 0.15) 0%,
+            rgba(20, 22, 26, 0.35) 30%,
+            rgba(20, 22, 26, 0.85) 60%,
+            #14161a 100%);
 }
 
 .hero-image {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    filter: blur(60px) brightness(0.5);
-    transform: scale(1.15);
+    object-position: top center;
+    filter: brightness(0.2);
 }
 
 .hero-content {
     position: relative;
     z-index: 2;
     display: flex;
-    gap: 2rem;
-    align-items: flex-start;
-    padding-top: 3rem;
-    max-width: 1400px;
+    gap: 3rem;
+    align-items: flex-end;
+    /* карточка прижата к низу */
+    width: 100%;
+    max-width: 1600px;
+    /* было 1400, чуть шире под большой экран */
     margin: 0 auto;
 }
 
 .hero-poster {
-    flex: 0 0 240px;
+    flex: 0 0 380px;
     aspect-ratio: 2 / 3;
-    border-radius: 12px;
+    border-radius: 14px;
     overflow: hidden;
     background: #1e2127;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
 }
 
 .hero-poster img {
@@ -441,70 +485,81 @@ onMounted(async () => {
 
 .hero-info {
     flex: 1;
-    padding-top: 2rem;
-    max-width: 800px;
+    max-width: 900px;
+    padding-bottom: 0.5rem;
 }
 
 .hero-info h1 {
-    margin: 0 0 0.5rem 0;
-    font-size: 2rem;
+    margin: 0 0 0.75rem 0;
+    font-size: 3rem;
     font-weight: 600;
-    line-height: 1.15;
+    line-height: 1.1;
 }
 
 .hero-year {
     color: #888;
     font-weight: 400;
-    font-size: 1.5rem;
+    font-size: 2rem;
 }
 
 .hero-rating {
     color: #ffd166;
-    font-size: 1.1rem;
-    margin-bottom: 1rem;
+    font-size: 1.5rem;
+    margin-bottom: 1.25rem;
 }
 
 .hero-progress {
     color: #aaa;
-    font-size: 0.95rem;
-    margin-bottom: 1rem;
+    font-size: 1.15rem;
+    margin-bottom: 1.25rem;
 }
 
 .hero-overview {
     color: #ccc;
-    line-height: 1.5;
-    font-size: 1rem;
-    max-width: 720px;
-    margin-bottom: 1rem;
+    line-height: 1.55;
+    font-size: 1.25rem;
+    max-width: 820px;
+    margin-bottom: 1.25rem;
 }
 
 .hero-tags {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.75rem;
+    /* было 0.5 */
     flex-wrap: wrap;
     margin-bottom: 1.5rem;
 }
 
 .hero-tags span {
     background: #2a2e35;
-    padding: 0.25rem 0.6rem;
+    border: 1px solid #3a3f47;
+    /* ← добавить */
+    padding: 0.35rem 0.75rem;
     border-radius: 4px;
-    font-size: 0.8rem;
-    color: #aaa;
+    font-size: 1rem;
+    color: #ccc;
+    /* было #aaa, чуть ярче */
+}
+
+.hero-path {
+    color: #666;
+    font-family: monospace;
+    word-break: break-all;
+    max-width: 720px;
 }
 
 .hero-actions {
     display: flex;
-    gap: 0.75rem;
+    gap: 1rem;
     margin-bottom: 1rem;
 }
 
 .btn-primary,
 .btn-secondary {
     border: none;
-    padding: 0.7rem 1.5rem;
+    padding: 0.9rem 1.8rem;
     border-radius: 6px;
-    font-size: 1rem;
+    font-size: 1.15rem;
     cursor: pointer;
     transition: background 0.15s ease;
 }
@@ -528,18 +583,10 @@ onMounted(async () => {
     background: #353a42;
 }
 
-.hero-path {
-    font-size: 0.75rem;
-    color: #666;
-    font-family: monospace;
-    word-break: break-all;
-    max-width: 720px;
-}
-
 .detail-body {
     max-width: 1400px;
-    margin: 2rem auto 0;
-    padding: 0 4rem;
+    margin: 0 auto;
+    padding: 0 4rem 4rem;
 }
 
 .season {
@@ -657,16 +704,6 @@ onMounted(async () => {
     background: #2a2e35;
 }
 
-.hero-backdrop::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(to bottom,
-            rgba(20, 22, 26, 0.3) 0%,
-            rgba(20, 22, 26, 0.7) 50%,
-            #14161a 100%);
-}
-
 .btn-trailer {
     display: inline-flex;
     align-items: center;
@@ -674,9 +711,9 @@ onMounted(async () => {
     background: #2a2e35;
     color: #e6e6e6;
     border: 1px solid #3a3f47;
-    padding: 0.4rem 1rem 0.4rem 0.4rem;
+    font-size: 1.15rem;
+    padding: 0.5rem 1.2rem 0.5rem 0.5rem;
     border-radius: 6px;
-    font-size: 1rem;
     cursor: pointer;
     transition: background 0.15s ease;
 }
@@ -691,8 +728,8 @@ onMounted(async () => {
 }
 
 .trailer-thumb {
-    width: 96px;
-    height: 54px;
+    width: 112px;
+    height: 63px;
     object-fit: cover;
     border-radius: 4px;
     display: block;
@@ -702,8 +739,8 @@ onMounted(async () => {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 96px;
-    height: 54px;
+    width: 112px;
+    height: 63px;
     border-radius: 4px;
     background: #1e2127;
     color: #4a9eff;

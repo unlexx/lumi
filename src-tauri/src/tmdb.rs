@@ -14,6 +14,7 @@ pub struct TmdbMovie {
     pub original_title: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
+    pub backdrop_path: Option<String>,
     pub vote_average: Option<f64>,
     pub release_date: Option<String>,
 }
@@ -30,6 +31,7 @@ pub struct TmdbShow {
     pub original_name: Option<String>,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
+    pub backdrop_path: Option<String>,
     pub vote_average: Option<f64>,
     pub first_air_date: Option<String>, // у сериалов "first_air_date", не "release_date"
 }
@@ -88,6 +90,48 @@ pub async fn get_poster(
     // Иначе качаем
     crate::log_info!("  → Poster cache MISS: {}, downloading...", tmdb_id);
     let url = format!("https://image.tmdb.org/t/p/w500{}", poster_path);
+
+    let client = build_client(proxy_url.as_deref())?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP status: {}", response.status()));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Read error: {}", e))?;
+
+    std::fs::write(&file_path, &bytes).map_err(|e| format!("Write error: {}", e))?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn get_backdrop(
+    state: tauri::State<'_, cache::AppState>,
+    tmdb_id: u32,
+    backdrop_path: String,
+) -> Result<String, String> {
+    let dir = cache::backdrops_dir();
+    let file_path = dir.join(format!("{}.jpg", tmdb_id));
+    let proxy_url = {
+        let s = state.settings();
+        s.proxy_url.clone()
+    };
+
+    if file_path.exists() {
+        crate::log_info!("  → Backdrop cache HIT: {}", tmdb_id);
+        return Ok(file_path.to_string_lossy().to_string());
+    }
+
+    crate::log_info!("  → Backdrop cache MISS: {}, downloading...", tmdb_id);
+    let url = format!("https://image.tmdb.org/t/p/w1280{}", backdrop_path);
 
     let client = build_client(proxy_url.as_deref())?;
     let response = client
@@ -404,6 +448,8 @@ pub async fn apply_tmdb_match(
         .as_str()
         .map(|p| format!("https://image.tmdb.org/t/p/w500{}", p));
 
+    let backdrop_path = raw["backdrop_path"].as_str().map(|s| s.to_string());
+
     let result = MatchResult {
         tmdb_id,
         title,
@@ -433,6 +479,7 @@ pub async fn apply_tmdb_match(
         result.original_title.as_deref(),
         result.overview.as_deref(),
         poster_path.as_deref(),
+        backdrop_path.as_deref(),
         result.rating,
         release_date,
     )

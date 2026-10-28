@@ -79,6 +79,8 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 
 ## Backlog
 
+LUMI-27: галерея backdrop'ов в DetailView. Показывать список backdrop'ов из TMDB /images, давать листать ←/→ или свайпом, лениво грузить выбранный, запоминать выбор в media_backdrops.selected. Кэш — posters/backdrops/{tmdb_id}/{hash}.jpg.
+
 ### Next
 
 

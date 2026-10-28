@@ -12,6 +12,7 @@ export interface TmdbInfo {
   original_title: string | null
   overview: string | null
   poster_url: string | null
+  backdrop_path: string | null
   poster_local: string | null
   rating: number | null
 }
