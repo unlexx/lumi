@@ -6,6 +6,12 @@ Docs: ARCHITECTURE.md (актуален)
 
 ## Последнее закрытое (свежее сверху)
 
+- **LUMI-25b:** кнопка «Найти на YouTube» в DetailView. Команда
+  `tmdb::get_youtube_search_url(uid)` строит запрос: локализованное `title`
+  + " трейлер" (приоритет ru) → `original_title` + " trailer" → имя файла.
+  Домен `www.youtube.com/results?search_query=…`, не `youtu.be`
+  (это шортенер для видео, для поиска не годится). 6 юнит-тестов
+  на `build_youtube_query`.
 - **LUMI-25:** адаптивная частота обновления под fps видео. `display.rs`
   (Win32 GDI: EnumDisplaySettingsW/ChangeDisplaySettingsExW + CDS_FULLSCREEN),
   `DisplayGuard` — RAII-возврат режима при drop + `restore_saved_mode()`

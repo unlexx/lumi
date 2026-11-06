@@ -839,3 +839,148 @@ pub async fn get_trailer_thumbnail(
 
     Ok(file_path.to_string_lossy().to_string())
 }
+
+/// Строит URL поиска YouTube для трейлера по данным `media_items`.
+///
+/// Приоритет запроса: локализованное `title` (обычно ru из TMDB) с суффиксом
+/// "трейлер" → `original_title` с "trailer" → имя файла без расширения.
+/// Домен — `www.youtube.com` (не youtu.be: это шортенер для конкретного видео,
+/// для поиска не подходит).
+#[tauri::command]
+pub fn get_youtube_search_url(
+    state: tauri::State<'_, crate::cache::AppState>,
+    uid: String,
+) -> Result<String, String> {
+    let conn = state.conn();
+
+    let row: (Option<String>, Option<String>, String) = conn
+        .query_row(
+            "SELECT title, original_title, name FROM media_items WHERE uid = ?1",
+            [&uid],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| format!("media_item not found for uid {}: {}", uid, e))?;
+
+    let (title, original_title, name) = row;
+
+    let query = build_youtube_query(
+        title.as_deref(),
+        original_title.as_deref(),
+        &name,
+    );
+
+    let encoded = urlencoding::encode(&query);
+    let url = format!("https://www.youtube.com/results?search_query={}", encoded);
+
+    crate::log_info!("[youtube] search query for {}: {:?} → {}", uid, query, url);
+    Ok(url)
+}
+
+/// Выбирает запрос для YouTube-поиска.
+///
+/// - Если `title` содержит кириллицу → `"<title> трейлер"` (ru-приоритет).
+/// - Иначе если `title` отличается от `original_title` → `"<title> трейлер"`
+///   (TMDB отдал локализацию, даже если она не кириллицей — например, немецкая;
+///   всё равно ищем по локализованному названию).
+/// - Иначе если `title` есть → `"<title> trailer"` (en/оригинал).
+/// - Иначе если `original_title` есть → `"<original_title> trailer"`.
+/// - Иначе — имя файла без расширения + `" trailer"`.
+fn build_youtube_query(
+    title: Option<&str>,
+    original_title: Option<&str>,
+    file_name: &str,
+) -> String {
+    let t = title.map(str::trim).filter(|s| !s.is_empty());
+    let o = original_title.map(str::trim).filter(|s| !s.is_empty());
+
+    let has_cyrillic = |s: &str| s.chars().any(|c| matches!(c, '\u{0400}'..='\u{04FF}'));
+
+    match (t, o) {
+        // Локализованное название с кириллицей → гарантированно ru, "трейлер".
+        (Some(t), _) if has_cyrillic(t) => format!("{} трейлер", t),
+
+        // Локализованное отличается от оригинала → тоже "трейлер"
+        // (даже если это не кириллица — это не en-оригинал).
+        (Some(t), Some(o)) if t != o => format!("{} трейлер", t),
+
+        // Локализованное == оригинал, либо оригинала нет → English-суффикс.
+        (Some(t), _) => format!("{} trailer", t),
+
+        (None, Some(o)) => format!("{} trailer", o),
+
+        (None, None) => {
+            let stem = std::path::Path::new(file_name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(file_name);
+            format!("{} trailer", stem)
+        }
+    }
+}
+
+#[cfg(test)]
+mod youtube_tests {
+    use super::build_youtube_query;
+
+    #[test]
+    fn localized_title_gets_russian_suffix() {
+        assert_eq!(
+            build_youtube_query(
+                Some("Человек-паук: Новый день"),
+                Some("Spider-Man: Brand New Day"),
+                "spider.mkv",
+            ),
+            "Человек-паук: Новый день трейлер"
+        );
+    }
+
+    #[test]
+    fn same_title_gets_english_suffix() {
+        // Локализация отсутствует, TMDB отдаёт одно и то же название
+        assert_eq!(
+            build_youtube_query(Some("Inception"), Some("Inception"), "inception.mkv"),
+            "Inception trailer"
+        );
+    }
+
+    #[test]
+    fn only_original_title() {
+        assert_eq!(
+            build_youtube_query(None, Some("Blade Runner 2049"), "x.mkv"),
+            "Blade Runner 2049 trailer"
+        );
+    }
+
+    #[test]
+    fn only_localized_title() {
+        assert_eq!(
+            build_youtube_query(Some("Матрица"), None, "x.mkv"),
+            "Матрица трейлер"
+        );
+    }
+
+    #[test]
+    fn fallback_to_file_name() {
+        assert_eq!(
+            build_youtube_query(None, None, "Some.Movie.2024.1080p.mkv"),
+            "Some.Movie.2024.1080p trailer"
+        );
+    }
+
+    #[test]
+    fn empty_strings_treated_as_none() {
+        assert_eq!(
+            build_youtube_query(Some("   "), Some(""), "fallback.mkv"),
+            "fallback trailer"
+        );
+    }
+
+    #[test]
+fn cyrillic_same_title_still_uses_russian_suffix() {
+    // Советский фильм: и оригинал, и локализация на кириллице.
+    assert_eq!(
+        build_youtube_query(Some("Ирония судьбы"), Some("Ирония судьбы"), "x.mkv"),
+        "Ирония судьбы трейлер"
+    );
+}
+}
