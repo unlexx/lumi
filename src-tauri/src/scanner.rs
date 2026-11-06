@@ -2,6 +2,7 @@ use crate::config::{load_folders, MediaType};
 use crate::parser::{parse_filename, ParsedVideo};
 use rusqlite::Connection;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::Path;
 use tauri::Emitter;
 use walkdir::WalkDir;
@@ -87,7 +88,8 @@ pub async fn scan_all(
     state: tauri::State<'_, crate::cache::AppState>,
 ) -> Result<Library, String> {
     crate::log_info!("=== scan_all started ===");
-
+    let mut valid_folder_paths: Vec<String> = Vec::new();
+    let mut found_uids: HashSet<String> = HashSet::new();
     let folders = load_folders();
     if folders.is_empty() {
         return Ok(Library {
@@ -118,6 +120,7 @@ pub async fn scan_all(
                 crate::log_info!("Skipping invalid folder: {}", folder.path);
                 continue;
             }
+            valid_folder_paths.push(folder.path.clone());
 
             app.emit(
                 "scan_progress",
@@ -157,11 +160,15 @@ pub async fn scan_all(
                 let full_path = file_path.to_string_lossy().to_string();
                 let uid = crate::cache::file_uid(&name);
 
-                // Проверяем, есть ли уже в БД
+                found_uids.insert(uid.clone());
+
                 if let Some(existing) = crate::cache::find_by_uid(&conn, &uid) {
-                    // Обновляем путь, если файл переместили
                     if existing.path != full_path {
+                        // Файл переместили внутри той же папки — обновляем путь, снимаем missing.
                         let _ = crate::cache::update_path(&conn, &uid, &full_path);
+                    } else if existing.missing {
+                        // Путь тот же, файл вернулся (например, вернули сетевой диск) — снимаем флаг.
+                        let _ = crate::cache::clear_missing(&conn, &uid);
                     }
                     continue;
                 }
@@ -233,6 +240,7 @@ pub async fn scan_all(
                     trailer_key: None,
                     episode_meta_fetched: false,
                     trailer_fetched: false,
+                    missing: false,
                     scanned_at: now,
                     updated_at: now,
                 };
@@ -248,6 +256,19 @@ pub async fn scan_all(
     } // lock отпущен
     crate::log_info!("=== New files: {} ===", new_uids.len());
 
+    // === Этап 1.5: пометка missing ===
+    {
+        let conn = state.conn();
+        crate::log_info!(
+            "[missing] valid folders = {}, found uids = {}",
+            valid_folder_paths.len(),
+            found_uids.len()
+        );
+        match crate::cache::mark_missing_not_in(&conn, &found_uids, &valid_folder_paths) {
+            Ok(n) => crate::log_info!("=== Marked {} items as missing ===", n),
+            Err(e) => crate::log_info!("Failed to mark missing: {}", e),
+        }
+    }
     // === Этап 2: TMDB для новых фильмов ===
     let new_movies: Vec<crate::cache::MediaItem> = {
         let conn = state.conn();

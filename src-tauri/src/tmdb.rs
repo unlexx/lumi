@@ -855,7 +855,7 @@ pub fn get_youtube_search_url(
 
     let row: (Option<String>, Option<String>, String) = conn
         .query_row(
-            "SELECT title, original_title, name FROM media_items WHERE uid = ?1",
+            "SELECT title, original_title, name FROM media_items WHERE uid = ?1 AND missing = 0",
             [&uid],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )

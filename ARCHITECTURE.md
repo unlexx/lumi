@@ -76,9 +76,11 @@ Lock acquired per sync block, **never held across `.await`** (LUMI-23).
 | `player::play_video` | launch mpv with optional start |
 | `player::toggle_fullscreen` | F11 |
 | `config::get_folders` / `add_folder` / `remove_folder` | folder management |
+| `tmdb:get_youtube_search_url ` | get url for YT trailer search |
 
 ## Backlog
 
+LUMI-29: retry TMDB lookup для unmatched-записей при сканировании
 LUMI-27: галерея backdrop'ов в DetailView. Показывать список backdrop'ов из TMDB /images, давать листать ←/→ или свайпом, лениво грузить выбранный, запоминать выбор в media_backdrops.selected. Кэш — posters/backdrops/{tmdb_id}/{hash}.jpg.
 
 ### Next

@@ -5,7 +5,9 @@ Repo: https://github.com/unlexx/lumi
 Docs: ARCHITECTURE.md (актуален)
 
 ## Последнее закрытое (свежее сверху)
-
+- **feat(LUMI-28):** soft delete missing files on scan
+- **feat(LUMI-25):** adaptive refresh rate for mpv playback
+- **feat(LUMI-25b):** youtube search button in DetailView
 - **LUMI-25b:** кнопка «Найти на YouTube» в DetailView. Команда
   `tmdb::get_youtube_search_url(uid)` строит запрос: локализованное `title`
   + " трейлер" (приоритет ru) → `original_title` + " trailer" → имя файла.
@@ -53,7 +55,7 @@ Docs: ARCHITECTURE.md (актуален)
 
 ## Соглашения
 
-- title + description для issue (на русском), потом код.
+- title + description для gitHub issue (на русском), потом код.
 - Коммиты: `feat(LUMI-XX): ...`, `fix: ...`, `refactor: ...`.
 - Критерии приёмки — на русском.
 - Перед крупной задачей — скидываю актуальные файлы, не полагаюсь на память чата.
