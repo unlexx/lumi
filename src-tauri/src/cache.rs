@@ -1,11 +1,11 @@
+use crate::settings::AppSettings;
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-
-use crate::settings::AppSettings;
 
 pub struct AppState {
     pub conn: Mutex<Connection>,
@@ -136,6 +136,7 @@ pub struct MediaItem {
     pub episode_meta_fetched: bool,
     pub trailer_key: Option<String>,
     pub trailer_fetched: bool,
+    pub missing: bool,
     pub scanned_at: i64,
     pub updated_at: i64,
 }
@@ -206,6 +207,11 @@ pub fn trailers_dir() -> PathBuf {
 
 pub fn init_db() -> SqlResult<Connection> {
     let conn = Connection::open(db_path())?;
+    init_schema(&conn)?;
+    Ok(conn)
+}
+
+pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS media_items (
     uid TEXT PRIMARY KEY,
@@ -230,22 +236,25 @@ pub fn init_db() -> SqlResult<Connection> {
     episode_meta_fetched INTEGER NOT NULL DEFAULT 0,
     trailer_key TEXT,
     trailer_fetched INTEGER NOT NULL DEFAULT 0,
+    missing INTEGER NOT NULL DEFAULT 0,
     scanned_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 )",
         [],
     )?;
 
+    // Defensive: если старая cache.db без колонки missing — добавим.
+    // Штатно (по ARCHITECTURE) cache.db стирается, но ALTER безопасен.
+    ensure_column_missing(conn)?;
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_media_tmdb ON media_items(tmdb_id)",
         [],
     )?;
-
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_media_type ON media_items(media_type)",
         [],
     )?;
-
     conn.execute(
         "CREATE TABLE IF NOT EXISTS watch_status (
         file_path TEXT PRIMARY KEY,
@@ -257,7 +266,22 @@ pub fn init_db() -> SqlResult<Connection> {
         [],
     )?;
 
-    Ok(conn)
+    Ok(())
+}
+
+fn ensure_column_missing(conn: &Connection) -> SqlResult<()> {
+    let has: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name = 'missing'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has == 0 {
+        conn.execute(
+            "ALTER TABLE media_items ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn mark_watched(
@@ -370,7 +394,7 @@ pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
                 poster_path, backdrop_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
                 episode_name, episode_overview, episode_still_path, episode_meta_fetched,
-                trailer_key, trailer_fetched,
+                trailer_key, trailer_fetched, missing,
                 scanned_at, updated_at
          FROM media_items WHERE uid = ?1",
         rusqlite::params![uid],
@@ -385,21 +409,22 @@ pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
                 original_title: row.get(6)?,
                 overview: row.get(7)?,
                 poster_path: row.get(8)?,
-                backdrop_path: row.get(9)?, // ← новое
-                rating: row.get(10)?,       // ← было 9
-                release_date: row.get(11)?, // ← было 10
-                parsed_title: row.get(12)?, // ← было 11
+                backdrop_path: row.get(9)?,
+                rating: row.get(10)?,
+                release_date: row.get(11)?,
+                parsed_title: row.get(12)?,
                 parsed_year: row.get(13)?,
                 season: row.get(14)?,
                 episode: row.get(15)?,
                 episode_name: row.get(16)?,
                 episode_overview: row.get(17)?,
                 episode_still_path: row.get(18)?,
-                episode_meta_fetched: row.get::<_, i64>(19)? != 0, // было 18
-                trailer_key: row.get(20)?,                         // было 19
-                trailer_fetched: row.get::<_, i64>(21)? != 0,      // было 20
-                scanned_at: row.get(22)?,                          // было 21
-                updated_at: row.get(23)?,                          // было 22
+                episode_meta_fetched: row.get::<_, i64>(19)? != 0,
+                trailer_key: row.get(20)?,
+                trailer_fetched: row.get::<_, i64>(21)? != 0,
+                missing: row.get::<_, i64>(22)? != 0,
+                scanned_at: row.get(23)?,
+                updated_at: row.get(24)?,
             })
         },
     )
@@ -414,10 +439,10 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
           poster_path, backdrop_path, rating, release_date, parsed_title, parsed_year,
           season, episode,
           episode_name, episode_overview, episode_still_path, episode_meta_fetched,
-          trailer_key, trailer_fetched,
+          trailer_key, trailer_fetched, missing,
           scanned_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         rusqlite::params![
             item.uid,
             item.path,
@@ -428,7 +453,7 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.original_title,
             item.overview,
             item.poster_path,
-            item.backdrop_path,          // ← новое
+            item.backdrop_path,
             item.rating,
             item.release_date,
             item.parsed_title,
@@ -438,9 +463,14 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             item.episode_name,
             item.episode_overview,
             item.episode_still_path,
-            if item.episode_meta_fetched { 1i64 } else { 0i64 },
+            if item.episode_meta_fetched {
+                1i64
+            } else {
+                0i64
+            },
             item.trailer_key,
             if item.trailer_fetched { 1i64 } else { 0i64 },
+            if item.missing { 1i64 } else { 0i64 },
             item.scanned_at,
             item.updated_at,
         ],
@@ -451,7 +481,7 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
 pub fn update_path(conn: &Connection, uid: &str, new_path: &str) -> SqlResult<()> {
     let now = now_ts();
     conn.execute(
-        "UPDATE media_items SET path = ?1, updated_at = ?2 WHERE uid = ?3",
+        "UPDATE media_items SET path = ?1, missing = 0, updated_at = ?2 WHERE uid = ?3",
         rusqlite::params![new_path, now, uid],
     )?;
     Ok(())
@@ -541,9 +571,11 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
     let mut stmt = match conn.prepare(
         "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path, backdrop_path,
                 rating, release_date, parsed_title, parsed_year, season, episode,
-       episode_name, episode_overview, episode_still_path, episode_meta_fetched, trailer_key, trailer_fetched,
+                episode_name, episode_overview, episode_still_path, episode_meta_fetched,
+                trailer_key, trailer_fetched, missing,
                 scanned_at, updated_at
-         FROM media_items",
+         FROM media_items
+         WHERE missing = 0",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -573,14 +605,26 @@ pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
             episode_meta_fetched: row.get::<_, i64>(19)? != 0,
             trailer_key: row.get(20)?,
             trailer_fetched: row.get::<_, i64>(21)? != 0,
-            scanned_at: row.get(22)?,
-            updated_at: row.get(23)?,
+            missing: row.get::<_, i64>(22)? != 0,
+            scanned_at: row.get(23)?,
+            updated_at: row.get(24)?,
         })
     });
 
     match rows {
-        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
-        Err(_) => Vec::new(),
+        Ok(iter) => iter
+            .filter_map(|r| match r {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    crate::log_info!("get_all_media_items row error: {}", e);
+                    None
+                }
+            })
+            .collect(),
+        Err(e) => {
+            crate::log_info!("get_all_media_items prepare error: {}", e);
+            Vec::new()
+        }
     }
 }
 
@@ -591,7 +635,7 @@ pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
        episode_name, episode_overview, episode_still_path, episode_meta_fetched, trailer_key, trailer_fetched,
                 scanned_at, updated_at
          FROM media_items
-         WHERE tmdb_id IS NULL",
+         WHERE tmdb_id IS NULL AND missing = 0",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
@@ -621,8 +665,9 @@ pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
             episode_meta_fetched: row.get::<_, i64>(19)? != 0,
             trailer_key: row.get(20)?,
             trailer_fetched: row.get::<_, i64>(21)? != 0,
-            scanned_at: row.get(22)?,
-            updated_at: row.get(23)?,
+            missing: row.get::<_, i64>(22)? != 0,
+            scanned_at: row.get(23)?,
+            updated_at: row.get(24)?,
         })
     });
 
@@ -680,4 +725,243 @@ pub fn set_trailer(conn: &Connection, uid: &str, trailer_key: Option<&str>) -> S
         rusqlite::params![trailer_key, now, uid],
     )?;
     Ok(())
+}
+
+pub fn mark_missing(conn: &Connection, uid: &str) -> SqlResult<()> {
+    let now = now_ts();
+    conn.execute(
+        "UPDATE media_items SET missing = 1, updated_at = ?1 WHERE uid = ?2",
+        rusqlite::params![now, uid],
+    )?;
+    Ok(())
+}
+
+pub fn clear_missing(conn: &Connection, uid: &str) -> SqlResult<()> {
+    let now = now_ts();
+    conn.execute(
+        "UPDATE media_items SET missing = 0, updated_at = ?1 WHERE uid = ?2 AND missing = 1",
+        rusqlite::params![now, uid],
+    )?;
+    Ok(())
+}
+
+/// Помечает `missing = 1` все записи, которые:
+///   - имеют `missing = 0` (уже помеченные не трогаем),
+///   - лежат под одной из `valid_folders`,
+///   - отсутствуют в `found_uids` (собранных со всех валидных папок).
+///
+/// `valid_folders` — только те папки из folders.json, у которых `is_dir()` = true.
+/// Это защита от отмонтированных сетевых дисков: если папка недоступна, её
+/// содержимое вообще не рассматривается.
+pub fn mark_missing_not_in(
+    conn: &Connection,
+    found_uids: &HashSet<String>,
+    valid_folders: &[String],
+) -> SqlResult<usize> {
+    if valid_folders.is_empty() {
+        return Ok(0);
+    }
+
+    let mut stmt = conn.prepare("SELECT uid, path FROM media_items WHERE missing = 0")?;
+    let candidates: Vec<String> = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .filter(|(_, path)| valid_folders.iter().any(|f| path_under_folder(path, f)))
+        .filter(|(uid, _)| !found_uids.contains(uid))
+        .map(|(uid, _)| uid)
+        .collect();
+
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    for uid in &candidates {
+        mark_missing(&tx, uid)?;
+    }
+    tx.commit()?;
+    Ok(candidates.len())
+}
+
+/// `true`, если `path` лежит внутри `folder` (по префиксу + разделителю).
+/// Голый `starts_with` не годится: `/movies` матчит `/movies2/a.mkv`.
+pub fn path_under_folder(path: &str, folder: &str) -> bool {
+    if !path.starts_with(folder) {
+        return false;
+    }
+    let rest = &path[folder.len()..];
+    if rest.is_empty() {
+        return true;
+    }
+    let first = rest.chars().next().unwrap();
+    first == '\\' || first == '/'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use std::collections::HashSet;
+
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn
+    }
+
+    fn sample_item(uid: &str, path: &str) -> MediaItem {
+        MediaItem {
+            uid: uid.to_string(),
+            path: path.to_string(),
+            name: path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("f.mkv")
+                .to_string(),
+            media_type: "movie".to_string(),
+            tmdb_id: Some(1),
+            title: Some("T".to_string()),
+            original_title: None,
+            overview: None,
+            poster_path: None,
+            backdrop_path: None,
+            rating: None,
+            release_date: None,
+            parsed_title: "T".to_string(),
+            parsed_year: None,
+            season: None,
+            episode: None,
+            episode_name: None,
+            episode_overview: None,
+            episode_still_path: None,
+            episode_meta_fetched: false,
+            trailer_key: None,
+            trailer_fetched: false,
+            missing: false,
+            scanned_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn schema_has_missing_column_default_false() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "/f/a.mkv")).unwrap();
+        assert!(!find_by_uid(&conn, "u1").unwrap().missing);
+    }
+
+    #[test]
+    fn ensure_column_missing_is_idempotent() {
+        let conn = test_conn();
+        // Повторный вызов не должен падать и не должен дублировать колонку.
+        ensure_column_missing(&conn).unwrap();
+        ensure_column_missing(&conn).unwrap();
+        insert_media_item(&conn, &sample_item("u1", "/f/a.mkv")).unwrap();
+    }
+
+    #[test]
+    fn mark_missing_sets_flag() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "/f/a.mkv")).unwrap();
+        mark_missing(&conn, "u1").unwrap();
+        assert!(find_by_uid(&conn, "u1").unwrap().missing);
+    }
+
+    #[test]
+    fn clear_missing_resets_flag() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "/f/a.mkv")).unwrap();
+        mark_missing(&conn, "u1").unwrap();
+        clear_missing(&conn, "u1").unwrap();
+        assert!(!find_by_uid(&conn, "u1").unwrap().missing);
+    }
+
+    #[test]
+    fn get_all_media_items_excludes_missing() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "/f/a.mkv")).unwrap();
+        insert_media_item(&conn, &sample_item("u2", "/f/b.mkv")).unwrap();
+        mark_missing(&conn, "u2").unwrap();
+        let all = get_all_media_items(&conn);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].uid, "u1");
+    }
+
+    #[test]
+    fn get_undefined_excludes_missing() {
+        let conn = test_conn();
+        let mut a = sample_item("u1", "/f/a.mkv");
+        a.tmdb_id = None;
+        let mut b = sample_item("u2", "/f/b.mkv");
+        b.tmdb_id = None;
+        insert_media_item(&conn, &a).unwrap();
+        insert_media_item(&conn, &b).unwrap();
+        mark_missing(&conn, "u2").unwrap();
+        let undef = get_undefined(&conn);
+        assert_eq!(undef.len(), 1);
+        assert_eq!(undef[0].uid, "u1");
+    }
+
+    #[test]
+    fn mark_missing_not_in_marks_only_absent_items_in_valid_folders() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "Z:\\movies\\a.mkv")).unwrap();
+        insert_media_item(&conn, &sample_item("u2", "Z:\\movies\\b.mkv")).unwrap();
+        insert_media_item(&conn, &sample_item("u3", "Y:\\other\\c.mkv")).unwrap();
+
+        let mut found = HashSet::new();
+        found.insert("u1".to_string()); // u1 на диске, u2 — нет, u3 вне валидных папок
+
+        let folders = vec!["Z:\\movies".to_string()];
+        assert_eq!(mark_missing_not_in(&conn, &found, &folders).unwrap(), 1);
+
+        assert!(!find_by_uid(&conn, "u1").unwrap().missing);
+        assert!(find_by_uid(&conn, "u2").unwrap().missing);
+        assert!(!find_by_uid(&conn, "u3").unwrap().missing);
+    }
+
+    /// Ключевой сценарий LUMI-28: «отключил Z: → ничего не удалилось».
+    #[test]
+    fn mark_missing_not_in_skips_when_no_valid_folders() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "Z:\\movies\\a.mkv")).unwrap();
+        let found: HashSet<String> = HashSet::new();
+        let folders: Vec<String> = Vec::new(); // Z: недоступен → is_dir()=false
+        assert_eq!(mark_missing_not_in(&conn, &found, &folders).unwrap(), 0);
+        assert!(!find_by_uid(&conn, "u1").unwrap().missing);
+    }
+
+    #[test]
+    fn mark_missing_not_in_is_idempotent() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "Z:\\movies\\a.mkv")).unwrap();
+        let folders = vec!["Z:\\movies".to_string()];
+        let empty = HashSet::new();
+        assert_eq!(mark_missing_not_in(&conn, &empty, &folders).unwrap(), 1);
+        // Второй прогон: запись уже missing=1, кандидатов нет.
+        assert_eq!(mark_missing_not_in(&conn, &empty, &folders).unwrap(), 0);
+    }
+
+    #[test]
+    fn update_path_clears_missing() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "/old/a.mkv")).unwrap();
+        mark_missing(&conn, "u1").unwrap();
+        update_path(&conn, "u1", "/new/a.mkv").unwrap();
+        let item = find_by_uid(&conn, "u1").unwrap();
+        assert!(!item.missing);
+        assert_eq!(item.path, "/new/a.mkv");
+    }
+
+    #[test]
+    fn path_under_folder_handles_separators_and_prefix_traps() {
+        assert!(path_under_folder("Z:\\movies\\a.mkv", "Z:\\movies"));
+        assert!(path_under_folder("Z:\\movies/sub/a.mkv", "Z:\\movies"));
+        assert!(path_under_folder("Z:\\movies", "Z:\\movies"));
+        assert!(!path_under_folder("Z:\\movies2\\a.mkv", "Z:\\movies")); // префикс без разделителя
+        assert!(!path_under_folder("Y:\\other\\a.mkv", "Z:\\movies"));
+        assert!(!path_under_folder("Z:\\MOVIES\\a.mkv", "Z:\\movies")); // регистр
+    }
 }
