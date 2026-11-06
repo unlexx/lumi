@@ -114,6 +114,17 @@ async function openTrailer() {
     }
 }
 
+async function openYoutubeSearch() {
+    const uid = uidForTrailer.value
+    if (!uid) return
+    try {
+        const url = await invoke<string>('get_youtube_search_url', { uid })
+        await openUrl(url)
+    } catch (e) {
+        console.error('[DetailView] youtube search failed:', e)
+    }
+}
+
 async function loadTrailer() {
     const tmdbId = tmdbIdForTrailer.value
     const uid = uidForTrailer.value
@@ -371,6 +382,13 @@ onMounted(async () => {
                             <img v-else-if="trailerThumb" :src="trailerThumb" alt="" class="trailer-thumb" />
                             <span v-else class="trailer-play-icon">▶</span>
                             <span>{{ trailerState === 'loading' ? 'Загрузка…' : 'Трейлер' }}</span>
+                        </button>
+                        <button class="btn-youtube" @click="openYoutubeSearch" title="Найти трейлер на YouTube">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path
+                                    d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2C0 8.1 0 12 0 12s0 3.9.5 5.8a3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1c.5-1.9.5-5.8.5-5.8s0-3.9-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z" />
+                            </svg>
+                            <span>Найти на YouTube</span>
                         </button>
                     </div>
 
@@ -761,5 +779,29 @@ onMounted(async () => {
     to {
         transform: rotate(360deg);
     }
+}
+
+.btn-youtube {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    background: #2a2e35;
+    color: #e6e6e6;
+    border: 1px solid #3a3f47;
+    font-size: 1.15rem;
+    padding: 0.9rem 1.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-youtube:hover {
+    background: #353a42;
+    border-color: #ff0033;
+}
+
+.btn-youtube svg {
+    color: #ff0033;
+    flex-shrink: 0;
 }
 </style>
