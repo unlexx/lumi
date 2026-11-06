@@ -96,6 +96,10 @@ LUMI-27: галерея backdrop'ов в DetailView. Показывать спи
 
 ### Architectural debt
 
+- ~~`media_items` column list drift: SELECT-список и конструктор `MediaItem`
+  рассинхронизировались трижды (LUMI-26a/28/29). Закрыто в LUMI-29
+  рефакторингом: `MEDIA_COLS` + `row_to_item` + `collect_items` + guard-тест
+  `media_cols_matches_constructor`.~~
 - Нормализация `media_items`: вынести TMDB-данные в отдельную таблицу `tmdb_entries` (один ряд на тайтл), оставить в `media_items` только файловые атрибуты и `tmdb_id` как FK. Сейчас одни и те же `title`/`overview`/`poster_path`/`backdrop_path`/`trailer_key` дублируются во всех эпизодах сериала.
 
 ### Post-release
