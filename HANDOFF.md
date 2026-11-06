@@ -5,7 +5,7 @@ Repo: https://github.com/unlexx/lumi
 Docs: ARCHITECTURE.md (актуален)
 
 ## Последнее закрытое (свежее сверху)
-
+- **feat(LUMI-28):** soft delete missing files on scan
 - **feat(LUMI-25):** adaptive refresh rate for mpv playback
 - **feat(LUMI-25b):** youtube search button in DetailView
 - **LUMI-25b:** кнопка «Найти на YouTube» в DetailView. Команда
