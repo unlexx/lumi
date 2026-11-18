@@ -139,6 +139,88 @@ pub struct MediaItem {
     pub missing: bool,
     pub scanned_at: i64,
     pub updated_at: i64,
+    pub tmdb_attempted_at: Option<i64>,
+}
+
+// ─── media_items: единый список колонок + маппер строки ─────────────────────
+//
+// Все SELECT-ы по media_items ОБЯЗАНЫ использовать MEDIA_COLS + row_to_item
+// через collect_items (или query_row для одиночной строки).
+//
+// При добавлении колонки в MediaItem:
+//   1) добавить её в MEDIA_COLS (в конец — чтобы не сдвигать индексы),
+//   2) добавить поле в row_to_item (в тот же индекс),
+//   3) прогнать `cargo test` — media_cols_matches_constructor поймает разъезд.
+//
+// История: этот список трижды разъезжался с конструктором
+// (LUMI-26a backdrop_path, LUMI-28 missing, LUMI-29 tmdb_attempted_at),
+// каждый раз диагностировался как «пустая библиотека / пустой Undefined».
+pub const MEDIA_COLS: &str =
+    "uid, path, name, media_type, tmdb_id, title, original_title, overview, \
+     poster_path, backdrop_path, rating, release_date, parsed_title, parsed_year, season, episode, \
+     episode_name, episode_overview, episode_still_path, episode_meta_fetched, \
+     trailer_key, trailer_fetched, missing, scanned_at, updated_at, tmdb_attempted_at";
+
+fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<MediaItem> {
+    Ok(MediaItem {
+        uid: row.get(0)?,
+        path: row.get(1)?,
+        name: row.get(2)?,
+        media_type: row.get(3)?,
+        tmdb_id: row.get(4)?,
+        title: row.get(5)?,
+        original_title: row.get(6)?,
+        overview: row.get(7)?,
+        poster_path: row.get(8)?,
+        backdrop_path: row.get(9)?,
+        rating: row.get(10)?,
+        release_date: row.get(11)?,
+        parsed_title: row.get(12)?,
+        parsed_year: row.get(13)?,
+        season: row.get(14)?,
+        episode: row.get(15)?,
+        episode_name: row.get(16)?,
+        episode_overview: row.get(17)?,
+        episode_still_path: row.get(18)?,
+        episode_meta_fetched: row.get::<_, i64>(19)? != 0,
+        trailer_key: row.get(20)?,
+        trailer_fetched: row.get::<_, i64>(21)? != 0,
+        missing: row.get::<_, i64>(22)? != 0,
+        scanned_at: row.get(23)?,
+        updated_at: row.get(24)?,
+        tmdb_attempted_at: row.get(25)?,
+    })
+}
+
+fn collect_items<P: rusqlite::Params>(
+    conn: &Connection,
+    sql: &str,
+    params: P,
+    ctx: &str,
+) -> Vec<MediaItem> {
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => {
+            crate::log_info!("{} prepare error: {}", ctx, e);
+            return Vec::new();
+        }
+    };
+    let rows = stmt.query_map(params, row_to_item);
+    match rows {
+        Ok(iter) => iter
+            .filter_map(|r| match r {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    crate::log_info!("{} row error: {}", ctx, e);
+                    None
+                }
+            })
+            .collect(),
+        Err(e) => {
+            crate::log_info!("{} query error: {}", ctx, e);
+            Vec::new()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -238,7 +320,8 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     trailer_fetched INTEGER NOT NULL DEFAULT 0,
     missing INTEGER NOT NULL DEFAULT 0,
     scanned_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    tmdb_attempted_at INTEGER
 )",
         [],
     )?;
@@ -246,7 +329,7 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     // Defensive: если старая cache.db без колонки missing — добавим.
     // Штатно (по ARCHITECTURE) cache.db стирается, но ALTER безопасен.
     ensure_column_missing(conn)?;
-
+    ensure_column_tmdb_attempted_at(conn)?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_media_tmdb ON media_items(tmdb_id)",
         [],
@@ -278,6 +361,21 @@ fn ensure_column_missing(conn: &Connection) -> SqlResult<()> {
     if has == 0 {
         conn.execute(
             "ALTER TABLE media_items ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_column_tmdb_attempted_at(conn: &Connection) -> SqlResult<()> {
+    let has: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name = 'tmdb_attempted_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has == 0 {
+        conn.execute(
+            "ALTER TABLE media_items ADD COLUMN tmdb_attempted_at INTEGER",
             [],
         )?;
     }
@@ -389,47 +487,15 @@ pub fn set_watched_bulk(conn: &Connection, paths: &[String], watched: bool) -> S
 }
 
 pub fn find_by_uid(conn: &Connection, uid: &str) -> Option<MediaItem> {
-    conn.query_row(
-        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview,
-                poster_path, backdrop_path,
-                rating, release_date, parsed_title, parsed_year, season, episode,
-                episode_name, episode_overview, episode_still_path, episode_meta_fetched,
-                trailer_key, trailer_fetched, missing,
-                scanned_at, updated_at
-         FROM media_items WHERE uid = ?1",
-        rusqlite::params![uid],
-        |row| {
-            Ok(MediaItem {
-                uid: row.get(0)?,
-                path: row.get(1)?,
-                name: row.get(2)?,
-                media_type: row.get(3)?,
-                tmdb_id: row.get(4)?,
-                title: row.get(5)?,
-                original_title: row.get(6)?,
-                overview: row.get(7)?,
-                poster_path: row.get(8)?,
-                backdrop_path: row.get(9)?,
-                rating: row.get(10)?,
-                release_date: row.get(11)?,
-                parsed_title: row.get(12)?,
-                parsed_year: row.get(13)?,
-                season: row.get(14)?,
-                episode: row.get(15)?,
-                episode_name: row.get(16)?,
-                episode_overview: row.get(17)?,
-                episode_still_path: row.get(18)?,
-                episode_meta_fetched: row.get::<_, i64>(19)? != 0,
-                trailer_key: row.get(20)?,
-                trailer_fetched: row.get::<_, i64>(21)? != 0,
-                missing: row.get::<_, i64>(22)? != 0,
-                scanned_at: row.get(23)?,
-                updated_at: row.get(24)?,
-            })
-        },
-    )
-    .optional()
-    .unwrap_or(None)
+    let sql = format!("SELECT {} FROM media_items WHERE uid = ?1", MEDIA_COLS);
+    match conn.query_row(&sql, rusqlite::params![uid], row_to_item) {
+        Ok(item) => Some(item),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            crate::log_info!("find_by_uid error for uid={}: {}", uid, e);
+            None
+        }
+    }
 }
 
 pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
@@ -440,9 +506,9 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
           season, episode,
           episode_name, episode_overview, episode_still_path, episode_meta_fetched,
           trailer_key, trailer_fetched, missing,
-          scanned_at, updated_at)
+          scanned_at, updated_at, tmdb_attempted_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
         rusqlite::params![
             item.uid,
             item.path,
@@ -473,6 +539,7 @@ pub fn insert_media_item(conn: &Connection, item: &MediaItem) -> SqlResult<()> {
             if item.missing { 1i64 } else { 0i64 },
             item.scanned_at,
             item.updated_at,
+            item.tmdb_attempted_at,
         ],
     )?;
     Ok(())
@@ -495,7 +562,7 @@ pub fn update_tmdb(
     original_title: Option<&str>,
     overview: Option<&str>,
     poster_path: Option<&str>,
-    backdrop_path: Option<&str>, // ← новое
+    backdrop_path: Option<&str>,
     rating: Option<f64>,
     release_date: Option<&str>,
 ) -> SqlResult<()> {
@@ -504,7 +571,7 @@ pub fn update_tmdb(
         "UPDATE media_items
          SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
              poster_path = ?5, backdrop_path = ?6, rating = ?7, release_date = ?8,
-             updated_at = ?9
+             updated_at = ?9, tmdb_attempted_at = ?9
          WHERE uid = ?10",
         rusqlite::params![
             tmdb_id,
@@ -545,7 +612,7 @@ pub fn update_tmdb_for_uids(
             "UPDATE media_items
              SET tmdb_id = ?1, title = ?2, original_title = ?3, overview = ?4,
                  poster_path = ?5, backdrop_path = ?6, rating = ?7, release_date = ?8,
-                 updated_at = ?9
+                 updated_at = ?9, tmdb_attempted_at = ?9
              WHERE uid = ?10",
             rusqlite::params![
                 tmdb_id,
@@ -568,113 +635,16 @@ pub fn update_tmdb_for_uids(
 }
 
 pub fn get_all_media_items(conn: &Connection) -> Vec<MediaItem> {
-    let mut stmt = match conn.prepare(
-        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path, backdrop_path,
-                rating, release_date, parsed_title, parsed_year, season, episode,
-                episode_name, episode_overview, episode_still_path, episode_meta_fetched,
-                trailer_key, trailer_fetched, missing,
-                scanned_at, updated_at
-         FROM media_items
-         WHERE missing = 0",
-    ) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-
-    let rows = stmt.query_map([], |row| {
-        Ok(MediaItem {
-            uid: row.get(0)?,
-            path: row.get(1)?,
-            name: row.get(2)?,
-            media_type: row.get(3)?,
-            tmdb_id: row.get(4)?,
-            title: row.get(5)?,
-            original_title: row.get(6)?,
-            overview: row.get(7)?,
-            poster_path: row.get(8)?,
-            backdrop_path: row.get(9)?,
-            rating: row.get(10)?,
-            release_date: row.get(11)?,
-            parsed_title: row.get(12)?,
-            parsed_year: row.get(13)?,
-            season: row.get(14)?,
-            episode: row.get(15)?,
-            episode_name: row.get(16)?,
-            episode_overview: row.get(17)?,
-            episode_still_path: row.get(18)?,
-            episode_meta_fetched: row.get::<_, i64>(19)? != 0,
-            trailer_key: row.get(20)?,
-            trailer_fetched: row.get::<_, i64>(21)? != 0,
-            missing: row.get::<_, i64>(22)? != 0,
-            scanned_at: row.get(23)?,
-            updated_at: row.get(24)?,
-        })
-    });
-
-    match rows {
-        Ok(iter) => iter
-            .filter_map(|r| match r {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    crate::log_info!("get_all_media_items row error: {}", e);
-                    None
-                }
-            })
-            .collect(),
-        Err(e) => {
-            crate::log_info!("get_all_media_items prepare error: {}", e);
-            Vec::new()
-        }
-    }
+    let sql = format!("SELECT {} FROM media_items WHERE missing = 0", MEDIA_COLS);
+    collect_items(conn, &sql, (), "get_all_media_items")
 }
 
 pub fn get_undefined(conn: &Connection) -> Vec<MediaItem> {
-    let mut stmt = match conn.prepare(
-        "SELECT uid, path, name, media_type, tmdb_id, title, original_title, overview, poster_path, backdrop_path,
-                rating, release_date, parsed_title, parsed_year, season, episode,
-       episode_name, episode_overview, episode_still_path, episode_meta_fetched, trailer_key, trailer_fetched,
-                scanned_at, updated_at
-         FROM media_items
-         WHERE tmdb_id IS NULL AND missing = 0",
-    ) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-
-    let rows = stmt.query_map([], |row| {
-        Ok(MediaItem {
-            uid: row.get(0)?,
-            path: row.get(1)?,
-            name: row.get(2)?,
-            media_type: row.get(3)?,
-            tmdb_id: row.get(4)?,
-            title: row.get(5)?,
-            original_title: row.get(6)?,
-            overview: row.get(7)?,
-            poster_path: row.get(8)?,
-            backdrop_path: row.get(9)?,
-            rating: row.get(10)?,
-            release_date: row.get(11)?,
-            parsed_title: row.get(12)?,
-            parsed_year: row.get(13)?,
-            season: row.get(14)?,
-            episode: row.get(15)?,
-            episode_name: row.get(16)?,
-            episode_overview: row.get(17)?,
-            episode_still_path: row.get(18)?,
-            episode_meta_fetched: row.get::<_, i64>(19)? != 0,
-            trailer_key: row.get(20)?,
-            trailer_fetched: row.get::<_, i64>(21)? != 0,
-            missing: row.get::<_, i64>(22)? != 0,
-            scanned_at: row.get(23)?,
-            updated_at: row.get(24)?,
-        })
-    });
-
-    match rows {
-        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
-        Err(_) => Vec::new(),
-    }
+    let sql = format!(
+        "SELECT {} FROM media_items WHERE tmdb_id IS NULL AND missing = 0",
+        MEDIA_COLS
+    );
+    collect_items(conn, &sql, (), "get_undefined")
 }
 
 fn now_ts() -> i64 {
@@ -799,6 +769,45 @@ pub fn path_under_folder(path: &str, folder: &str) -> bool {
     first == '\\' || first == '/'
 }
 
+/// Отмечает, что попытка матчинга в TMDB была (неважно, успешная или нет).
+/// Повторная попытка — только после backoff от этого момента.
+pub fn mark_tmdb_attempted(conn: &Connection, uid: &str) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE media_items SET tmdb_attempted_at = ?1 WHERE uid = ?2",
+        rusqlite::params![now_ts(), uid],
+    )?;
+    Ok(())
+}
+
+/// Возвращает записи, которым нужен retry-матчинг в TMDB:
+///   - `tmdb_id IS NULL` — ещё не сматчены,
+///   - `missing = 0` — файл на месте,
+///   - `tmdb_attempted_at IS NULL` (никогда не пробовали) **или**
+///     `tmdb_attempted_at < now - backoff_secs` (пора повторить).
+///
+/// `limit` ограничивает размер батча за один прогон, чтобы не упереться
+/// в rate limit при большой библиотеке с плохими именами.
+pub fn get_unmatched_for_retry(
+    conn: &Connection,
+    backoff_secs: i64,
+    limit: usize,
+) -> Vec<MediaItem> {
+    let cutoff = now_ts() - backoff_secs;
+    let sql = format!(
+        "SELECT {} FROM media_items \
+         WHERE tmdb_id IS NULL AND missing = 0 \
+           AND (tmdb_attempted_at IS NULL OR tmdb_attempted_at < ?1) \
+         ORDER BY scanned_at ASC LIMIT ?2",
+        MEDIA_COLS
+    );
+    collect_items(
+        conn,
+        &sql,
+        rusqlite::params![cutoff, limit as i64],
+        "get_unmatched_for_retry",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -842,6 +851,7 @@ mod tests {
             missing: false,
             scanned_at: 0,
             updated_at: 0,
+            tmdb_attempted_at: None,
         }
     }
 
@@ -963,5 +973,134 @@ mod tests {
         assert!(!path_under_folder("Z:\\movies2\\a.mkv", "Z:\\movies")); // префикс без разделителя
         assert!(!path_under_folder("Y:\\other\\a.mkv", "Z:\\movies"));
         assert!(!path_under_folder("Z:\\MOVIES\\a.mkv", "Z:\\movies")); // регистр
+    }
+
+    #[test]
+    fn mark_tmdb_attempted_sets_timestamp() {
+        let conn = test_conn();
+        insert_media_item(&conn, &sample_item("u1", "/f/a.mkv")).unwrap();
+        assert!(find_by_uid(&conn, "u1")
+            .unwrap()
+            .tmdb_attempted_at
+            .is_none());
+        mark_tmdb_attempted(&conn, "u1").unwrap();
+        assert!(find_by_uid(&conn, "u1")
+            .unwrap()
+            .tmdb_attempted_at
+            .is_some());
+    }
+
+    #[test]
+    fn update_tmdb_sets_tmdb_attempted_at() {
+        let conn = test_conn();
+        let mut item = sample_item("u1", "/f/a.mkv");
+        item.tmdb_id = None;
+        insert_media_item(&conn, &item).unwrap();
+        update_tmdb(&conn, "u1", 42, "Title", None, None, None, None, None, None).unwrap();
+        let got = find_by_uid(&conn, "u1").unwrap();
+        assert_eq!(got.tmdb_id, Some(42));
+        assert!(got.tmdb_attempted_at.is_some());
+    }
+
+    #[test]
+    fn get_unmatched_for_retry_returns_never_attempted_immediately() {
+        let conn = test_conn();
+        let mut item = sample_item("u1", "/f/a.mkv");
+        item.tmdb_id = None;
+        insert_media_item(&conn, &item).unwrap();
+        let items = get_unmatched_for_retry(&conn, 3600, 10);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].uid, "u1");
+    }
+
+    #[test]
+    fn get_unmatched_for_retry_respects_backoff() {
+        let conn = test_conn();
+        let mut item = sample_item("u1", "/f/a.mkv");
+        item.tmdb_id = None;
+        insert_media_item(&conn, &item).unwrap();
+        mark_tmdb_attempted(&conn, "u1").unwrap();
+
+        // backoff = час — запись только что пытались, не должна попасть
+        assert!(get_unmatched_for_retry(&conn, 3600, 10).is_empty());
+
+        // backoff = 0 — должна попасть (attempted_at < now, часы уже прошли)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert_eq!(get_unmatched_for_retry(&conn, 0, 10).len(), 1);
+    }
+
+    #[test]
+    fn get_unmatched_for_retry_excludes_matched() {
+        let conn = test_conn();
+        // sample_item имеет tmdb_id = Some(1) — не должен попасть
+        insert_media_item(&conn, &sample_item("u1", "/f/a.mkv")).unwrap();
+        assert!(get_unmatched_for_retry(&conn, 0, 10).is_empty());
+    }
+
+    #[test]
+    fn get_unmatched_for_retry_excludes_missing() {
+        let conn = test_conn();
+        let mut item = sample_item("u1", "/f/a.mkv");
+        item.tmdb_id = None;
+        insert_media_item(&conn, &item).unwrap();
+        mark_missing(&conn, "u1").unwrap();
+        assert!(get_unmatched_for_retry(&conn, 0, 10).is_empty());
+    }
+
+    #[test]
+    fn get_unmatched_for_retry_respects_limit() {
+        let conn = test_conn();
+        for i in 0..5 {
+            let mut item = sample_item(&format!("u{}", i), &format!("/f/{}.mkv", i));
+            item.tmdb_id = None;
+            insert_media_item(&conn, &item).unwrap();
+        }
+        assert_eq!(get_unmatched_for_retry(&conn, 0, 2).len(), 2);
+        assert_eq!(get_unmatched_for_retry(&conn, 0, 100).len(), 5);
+    }
+
+    #[test]
+    fn ensure_column_tmdb_attempted_at_is_idempotent() {
+        let conn = test_conn();
+        ensure_column_tmdb_attempted_at(&conn).unwrap();
+        ensure_column_tmdb_attempted_at(&conn).unwrap();
+        // не падает и не дублирует — этого достаточно
+    }
+
+    /// Инвариант: MEDIA_COLS и row_to_item не разъезжаются с MediaItem.
+    /// Добавил поле в MediaItem и забыл его в MEDIA_COLS или в row_to_item —
+    /// тест падает на любой из четырёх SELECT-функций.
+    #[test]
+    fn media_cols_matches_constructor() {
+        let conn = test_conn();
+        let mut item = sample_item("u1", "/f/a.mkv");
+        item.tmdb_id = None; // чтобы попал в get_undefined
+        item.tmdb_attempted_at = None; // чтобы попал в get_unmatched_for_retry
+        insert_media_item(&conn, &item).unwrap();
+
+        // find_by_uid: проверяем round-trip конкретных полей
+        let got = find_by_uid(&conn, "u1")
+            .expect("find_by_uid: SELECT или row_to_item разъехались с MediaItem");
+        assert_eq!(got.uid, "u1");
+        assert_eq!(got.path, "/f/a.mkv");
+        assert!(!got.missing);
+        assert_eq!(got.tmdb_attempted_at, None);
+
+        // Все три списковых SELECT-а должны вернуть ровно одну запись.
+        assert_eq!(
+            get_all_media_items(&conn).len(),
+            1,
+            "get_all_media_items: SELECT или row_to_item разъехались"
+        );
+        assert_eq!(
+            get_undefined(&conn).len(),
+            1,
+            "get_undefined: SELECT или row_to_item разъехались"
+        );
+        assert_eq!(
+            get_unmatched_for_retry(&conn, 0, 10).len(),
+            1,
+            "get_unmatched_for_retry: SELECT или row_to_item разъехались"
+        );
     }
 }

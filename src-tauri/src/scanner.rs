@@ -243,6 +243,7 @@ pub async fn scan_all(
                     missing: false,
                     scanned_at: now,
                     updated_at: now,
+                    tmdb_attempted_at: None,
                 };
 
                 if let Err(e) = crate::cache::insert_media_item(&conn, &item) {
@@ -357,6 +358,95 @@ pub async fn scan_all(
             }
             Err(e) => {
                 crate::log_info!("  → TMDB error for TV '{}': {}", title, e);
+            }
+        }
+    }
+
+        // === Этап 3.5: retry для unmatched (LUMI-29) ===
+    let retry_items: Vec<crate::cache::MediaItem> = {
+        let conn = state.conn();
+        crate::cache::get_unmatched_for_retry(
+            &conn,
+            tmdb_retry_backoff_secs(),
+            TMDB_RETRY_LIMIT,
+        )
+    };
+
+    if !retry_items.is_empty() {
+        crate::log_info!("=== TMDB retry for {} unmatched items ===", retry_items.len());
+
+        // Movies — поштучно
+        for item in retry_items.iter().filter(|i| i.media_type == "movie") {
+            match crate::tmdb::get_or_fetch(&client, &api_key, &item.parsed_title, item.parsed_year).await {
+                Ok(Some(movie)) => {
+                    let conn = state.conn();
+                    let _ = crate::cache::update_tmdb(
+                        &conn,
+                        &item.uid,
+                        movie.id,
+                        &movie.title,
+                        movie.original_title.as_deref(),
+                        movie.overview.as_deref(),
+                        movie.poster_path.as_deref(),
+                        movie.backdrop_path.as_deref(),
+                        movie.vote_average,
+                        movie.release_date.as_deref(),
+                    );
+                    crate::log_info!("  [retry] → Matched: {}", movie.title);
+                }
+                Ok(None) => {
+                    let conn = state.conn();
+                    let _ = crate::cache::mark_tmdb_attempted(&conn, &item.uid);
+                    crate::log_info!("  [retry] → No match for '{}'", item.parsed_title);
+                }
+                Err(e) => {
+                    // Сеть упала — не помечаем attempted, повторим на следующем скане.
+                    crate::log_info!("  [retry] → TMDB error for '{}': {}", item.parsed_title, e);
+                }
+            }
+        }
+
+        // TV — группируем, как в основной ветке
+        let mut retry_tv_groups: HashMap<(String, Option<u32>), Vec<&crate::cache::MediaItem>> =
+            HashMap::new();
+        for item in retry_items.iter().filter(|i| i.media_type == "tv_shows") {
+            let key = (item.parsed_title.to_lowercase(), item.parsed_year);
+            retry_tv_groups.entry(key).or_default().push(item);
+        }
+
+        for ((title, year), episodes) in retry_tv_groups {
+            match crate::tmdb::get_or_fetch_tv(&client, &api_key, &title, year).await {
+                Ok(Some(tv)) => {
+                    let uids: Vec<String> = episodes.iter().map(|e| e.uid.clone()).collect();
+                    let conn = state.conn();
+                    let _ = crate::cache::update_tmdb_for_uids(
+                        &conn,
+                        &uids,
+                        tv.id,
+                        &tv.name,
+                        tv.original_name.as_deref(),
+                        tv.overview.as_deref(),
+                        tv.poster_path.as_deref(),
+                        tv.backdrop_path.as_deref(),
+                        tv.vote_average,
+                        tv.first_air_date.as_deref(),
+                    );
+                    crate::log_info!(
+                        "  [retry] → Matched TV: {} ({} episodes)",
+                        tv.name,
+                        episodes.len()
+                    );
+                }
+                Ok(None) => {
+                    let conn = state.conn();
+                    for ep in &episodes {
+                        let _ = crate::cache::mark_tmdb_attempted(&conn, &ep.uid);
+                    }
+                    crate::log_info!("  [retry] → No match for TV '{}'", title);
+                }
+                Err(e) => {
+                    crate::log_info!("  [retry] → TMDB error for TV '{}': {}", title, e);
+                }
             }
         }
     }
@@ -551,6 +641,17 @@ fn build_tv_shows(items: &[crate::cache::MediaItem], conn: &Connection) -> Vec<T
 
     shows.sort_by(|a, b| a.title.cmp(&b.title));
     shows
+}
+
+const TMDB_RETRY_LIMIT: usize = 50;
+
+/// Backoff между повторными попытками матчинга. По умолчанию 24 часа.
+/// Для тестов: `LUMI_TMDB_RETRY_BACKOFF_SECS=0 cargo run`.
+fn tmdb_retry_backoff_secs() -> i64 {
+    std::env::var("LUMI_TMDB_RETRY_BACKOFF_SECS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(24 * 60 * 60)
 }
 
 #[derive(Serialize)]
